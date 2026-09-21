@@ -132,18 +132,18 @@ KIND_STATUS = {
 }
 
 KIND_HINT = {
-    "config": "检查 .env：NEWAPI_BASE_URL / NEWAPI_API_KEY / NEWAPI_MODEL 三项都必须有值。密钥只能通过环境变量配置，不要填到网页里。",
+    "config": "检查 .env：GEMINI_API_KEY 和 GEMINI_MODEL 必须有值（GEMINI_BASE_URL 不填就走 Google 官方端点）。密钥只能通过环境变量配置，不要填到网页里。",
     "palette": "调色板写法：#RRGGBB 逗号分隔，也接受 #RGB 简写。",
     "size": "尺寸只能是 8、16、32、64。",
     "limits": "图片超过了服务端限制。请先缩小图片再上传。",
     "input_image": "这个文件不是可识别的图片，或者内容已损坏。",
-    "upstream_http": "网关拒绝了请求。若报错里提到 responseModalities 或 imageConfig，把对应的 .env 变量清空后重试。",
-    "upstream_transport": "连不上网关。确认 NEWAPI_BASE_URL 指向的地址在运行、且本机能访问。",
-    "upstream_timeout": "单次 socket 操作超过 NEWAPI_TIMEOUT 秒仍未完成。上游请求可能仍在生成，且可能仍在计费——NEWAPI_TIMEOUT 是逐 socket 超时，不是墙钟总时限，所以不要因为等待超过预算就判定失败。",
-    "upstream_non_json": "网关返回了非 JSON（通常是 HTML 错误页）。检查网关地址是否指到了反向代理或错误路由。",
-    "upstream_protocol": "网关返回的 JSON 结构不是对象，可能不是 Gemini 协议端点。",
-    "upstream_error_field": "网关在 HTTP 200 里返回了 error 对象，通常是配额或权限问题。",
-    "no_image": "确认 NEWAPI_MODEL 支持出图，且 NEWAPI_RESPONSE_MODALITIES 含 IMAGE。完整响应见 response.json。",
+    "upstream_http": "上游拒绝了请求（Google 官方端点，或者你配置的网关）。若报错里提到 responseModalities 或 imageConfig，把 GEMINI_RESPONSE_MODALITIES / GEMINI_IMAGE_SIZE 清空后重试。",
+    "upstream_transport": "连不上上游。设过 GEMINI_BASE_URL 就确认那个地址在运行、且本机能访问；没设过则走的是 Google 官方端点，多半是网络或代理问题。密钥不对时上游返回的是 401/403，而不是连不上。",
+    "upstream_timeout": "单次 socket 操作超过 GEMINI_TIMEOUT 秒仍未完成。上游请求可能仍在生成，且可能仍在计费——GEMINI_TIMEOUT 是逐 socket 超时，不是墙钟总时限，所以不要因为等待超过预算就判定失败。",
+    "upstream_non_json": "上游返回了非 JSON（通常是 HTML 错误页）。检查 GEMINI_BASE_URL 是否指到了反向代理或错误路由。",
+    "upstream_protocol": "上游返回的 JSON 结构不是对象，可能这个地址不是 Gemini 协议端点。",
+    "upstream_error_field": "上游在 HTTP 200 里返回了 error 对象，通常是配额或权限问题。",
+    "no_image": "确认 GEMINI_MODEL 支持出图，且 GEMINI_RESPONSE_MODALITIES 含 IMAGE（不填时默认就是 TEXT,IMAGE）。完整响应见 response.json。",
     "palette_violation": "这是内部一致性断言失败，说明降采样或量化出现了回归。像素本应严格来自调色板。",
     "invariant": "内部一致性断言失败。",
     "busy": "已经有一个任务在运行。可以点「查看进度」接上它。",
@@ -185,9 +185,9 @@ def redact(text: str, api_key: str) -> str:
     if not text:
         return text
     if api_key and len(api_key) >= 6:
-        text = text.replace(api_key, "[redacted:NEWAPI_API_KEY]")
+        text = text.replace(api_key, "[redacted:api_key]")
         encoded = base64.b64encode(api_key.encode()).decode()
-        text = text.replace(encoded, "[redacted:NEWAPI_API_KEY:b64]")
+        text = text.replace(encoded, "[redacted:api_key:b64]")
     for pattern in _SECONDARY_PATTERNS:
         if pattern.groups >= 3:
             text = pattern.sub(lambda m: m.group(1) + "[redacted]" + m.group(3), text)
@@ -234,15 +234,15 @@ def classify(exc: BaseException, where: str) -> str:
     """Map an exception to an error kind, structurally."""
     if isinstance(exc, pr.PixelError):
         return exc.kind
-    # These escape unwrapped from call_newapi: urllib's timeout is a bare
-    # TimeoutError with __cause__ = None, and it is the most common slow-gateway
+    # These escape unwrapped from call_gemini: urllib's timeout is a bare
+    # TimeoutError with __cause__ = None, and it is the most common slow-endpoint
     # failure.  Before this mapping the user saw a Python traceback.
     if isinstance(exc, TimeoutError):
         return "upstream_timeout"
     if isinstance(exc, (BrokenPipeError, ConnectionResetError)):
-        # During the upstream exchange this is far more often the gateway
+        # During the upstream exchange this is far more often the endpoint
         # dropping the connection than the browser.
-        if where in ("call_newapi", "extract_image", "download_image"):
+        if where in ("upstream_generate", "extract_image", "download_image"):
             return "upstream_transport"
         return "client_disconnect"
     if isinstance(exc, Image.DecompressionBombError):
@@ -270,7 +270,7 @@ def to_envelope(
     message = redact(str(exc), api_key)
     hint = KIND_HINT.get(kind, "")
     if kind == "upstream_http" and status:
-        hint = f"网关返回 HTTP {status}。" + hint
+        hint = f"上游返回 HTTP {status}。" + hint
 
     envelope: dict[str, Any] = {
         "kind": kind,
@@ -476,13 +476,6 @@ def check_image_limits(blob: bytes) -> None:
         )
 
 
-def safe_host(url: str) -> str:
-    """Host and port only. A gateway URL may carry user:pass@ userinfo, and
-    that is a credential the browser must never receive."""
-    without_scheme = re.sub(r"^[a-zA-Z][a-zA-Z0-9+.\-]*://", "", url or "")
-    return without_scheme.split("@")[-1].split("/")[0].split("?")[0]
-
-
 def preview_scale_for(n: int) -> int:
     """ONE authority for the preview zoom. 8->32, 16->32, 32->16, 64->8.
 
@@ -598,7 +591,7 @@ def repro_command(run: Run) -> str:
 def work(run: Run, upload: bytes, mime_type: str, filename: str, size: int,
          palette_spec: Any, max_colors: int, pixelize_only: bool) -> None:
     """The background worker. Runs on its own thread; never touches a socket."""
-    api_key = os.getenv("NEWAPI_API_KEY", "").strip()
+    api_key = pr.upstream_env()["api_key"]
     where = "work"
     try:
         run.dir.mkdir(parents=True, exist_ok=True)
@@ -634,13 +627,13 @@ def work(run: Run, upload: bytes, mime_type: str, filename: str, size: int,
         if pixelize_only:
             raw = upload
         else:
-            where = "call_newapi"
+            where = "upstream_generate"
             run.emit("upstream_wait", "调用模型中", {
                 "model": config.model,
                 "timeout_s": config.timeout,
-                "host": safe_host(config.base_url),
+                "host": pr.safe_host(config.base_url),
             })
-            response = pr.call_newapi(input_path, config)
+            response = pr.call_gemini(input_path, config)
             run.emit("upstream_response", "模型已返回", {
                 "bytes": len(json.dumps(response, ensure_ascii=False)),
             })
@@ -930,7 +923,7 @@ class Handler(BaseHTTPRequestHandler):
 
     @property
     def api_key(self) -> str:
-        return os.getenv("NEWAPI_API_KEY", "").strip()
+        return pr.upstream_env()["api_key"]
 
     def host_ok(self) -> bool:
         """Unconditional Host allowlist -- this is what closes DNS rebinding.
@@ -1062,16 +1055,16 @@ class Handler(BaseHTTPRequestHandler):
 
     # -- endpoints ---------------------------------------------------------
     def upstream_configured(self) -> bool:
-        return all(os.getenv(name, "").strip() for name in
-                   ("NEWAPI_BASE_URL", "NEWAPI_API_KEY", "NEWAPI_MODEL"))
+        return pr.upstream_configured()
 
     def meta(self) -> dict[str, Any]:
         """Everything the page needs to boot. Never carries the key or the URL.
 
-        The base URL is reduced to scheme+host+port because a gateway URL may
-        carry userinfo; upstream_configured answers the only question the UI
+        The base URL is reduced to scheme+host+port because it may carry
+        userinfo; upstream_configured answers the only question the UI
         actually has.
         """
+        upstream = pr.upstream_env()
         default_size = 64
         try:
             configured = pr.parse_size(os.getenv("PIXEL_SIZE", "64x64"))
@@ -1079,7 +1072,7 @@ class Handler(BaseHTTPRequestHandler):
                 default_size = configured[0]
         except ValueError:
             pass
-        host = safe_host(os.getenv("NEWAPI_BASE_URL", ""))
+        host = pr.safe_host(upstream["base_url"])
         return {
             "sizes": list(SIZES),
             "default_size": default_size,
@@ -1090,11 +1083,11 @@ class Handler(BaseHTTPRequestHandler):
             "max_upload_bytes": MAX_UPLOAD_BYTES,
             "max_image_pixels": MAX_IMAGE_PIXELS,
             "max_dimension": MAX_DIMENSION,
-            "model": os.getenv("NEWAPI_MODEL", "").strip(),
-            "api_version": os.getenv("NEWAPI_API_VERSION", "v1beta").strip(),
-            "upstream_configured": self.upstream_configured(),
+            "model": upstream["model"],
+            "api_version": upstream["api_version"],
+            "upstream_configured": pr.upstream_configured(upstream),
             "upstream_host": host,
-            "timeout_seconds": float(os.getenv("NEWAPI_TIMEOUT", "180")),
+            "timeout_seconds": float(upstream["timeout"]),
             "keep_raw": pr.env_bool("PIXEL_KEEP_RAW", True),
             "pixelize_only_available": True,
             "version": VERSION,
@@ -1147,7 +1140,7 @@ class Handler(BaseHTTPRequestHandler):
         build_web_config(size, body.get("palette"), max_colors, pixelize_only)
         if not pixelize_only and not self.upstream_configured():
             raise pr.ConfigError(
-                "Missing .env values: NEWAPI_BASE_URL, NEWAPI_API_KEY or NEWAPI_MODEL. "
+                "Missing .env values: GEMINI_API_KEY or GEMINI_MODEL. "
                 "Copy .env.example to .env and fill them in."
             )
 
@@ -1346,15 +1339,16 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     url = f"http://127.0.0.1:{port}/"
-    configured = all(os.getenv(n, "").strip() for n in
-                     ("NEWAPI_BASE_URL", "NEWAPI_API_KEY", "NEWAPI_MODEL"))
-    server.upstream_timeout = float(os.getenv("NEWAPI_TIMEOUT", "180"))
+    upstream = pr.upstream_env()
+    configured = pr.upstream_configured(upstream)
+    server.upstream_timeout = float(upstream["timeout"])
     # flush=True on every line: stdout is block-buffered when redirected, and
     # reading this URL off the terminal IS the tool's launch workflow, so a
     # banner that appears only on exit is useless.
     print(f"pixel-web {VERSION}")
     print(f"  {url}")
-    print(f"  model: {os.getenv('NEWAPI_MODEL', '(unset)')}   upstream: "
+    print(f"  model: {upstream['model'] or '(unset)'}   "
+          f"endpoint: {pr.safe_host(upstream['base_url'])}   "
           f"{'configured' if configured else 'NOT configured — set .env'}")
     print(f"  runs: {RUNS_DIR}")
     print("  Ctrl+C to stop. The key and model come from .env only.", flush=True)

@@ -1,9 +1,14 @@
 #!/usr/bin/env python3
-"""Minimal NewAPI (Gemini) image-to-pixel-art converter.
+"""Minimal Gemini image-to-pixel-art converter.
 
-The NewAPI call is intentionally kept small and configurable.  It speaks the
+The upstream call is intentionally kept small and configurable.  It speaks the
 Gemini native generateContent protocol, so the model is asked for image output
 and the local Pillow pass enforces the final pixel-art constraints.
+
+Authentication is the x-goog-api-key header against GEMINI_BASE_URL, which
+defaults to the official endpoint.  An AI Studio key therefore needs no endpoint
+configured at all, and any gateway speaking the same protocol works by pointing
+GEMINI_BASE_URL at it.
 """
 
 from __future__ import annotations
@@ -35,6 +40,12 @@ URL_RE = re.compile(r"https?://[^\s)\]}>\"']+")
 
 
 DEFAULT_API_VERSION = "v1beta"
+
+# The official Gemini Developer API endpoint, and the same one the google-genai
+# SDK targets when nothing overrides it.  Deliberately a bare origin:
+# api_url() appends /{version}/models/{model}:generateContent, so a default
+# carrying /v1beta would build /v1beta/v1beta/...
+DEFAULT_BASE_URL = "https://generativelanguage.googleapis.com"
 
 # Formats Gemini accepts for inline image data. Anything else (GIF, BMP, TIFF,
 # ...) has to be re-encoded before it can be sent.
@@ -75,7 +86,7 @@ class SizeError(PixelError, ValueError):
     kind = "size"
 
 
-class NewAPIHTTPError(PixelError):
+class UpstreamHTTPError(PixelError):
     kind = "upstream_http"
 
     def __init__(self, message: str, status: int | None = None, detail: str = ""):
@@ -84,11 +95,11 @@ class NewAPIHTTPError(PixelError):
         self.detail = detail  # the FULL upstream body, not the 1200-char slice
 
 
-class NewAPITransportError(PixelError):
+class UpstreamTransportError(PixelError):
     kind = "upstream_transport"
 
 
-class NewAPINonJSONError(PixelError):
+class UpstreamNonJSONError(PixelError):
     kind = "upstream_non_json"
 
     def __init__(self, message: str, status: int | None = None, detail: str = ""):
@@ -97,11 +108,11 @@ class NewAPINonJSONError(PixelError):
         self.detail = detail
 
 
-class NewAPIProtocolError(PixelError):
+class UpstreamProtocolError(PixelError):
     kind = "upstream_protocol"
 
 
-class NewAPIErrorField(PixelError):
+class UpstreamErrorField(PixelError):
     kind = "upstream_error_field"
 
 
@@ -159,6 +170,87 @@ def env_bool(name: str, default: bool) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
+# --------------------------------------------------------------------------
+# upstream configuration
+# --------------------------------------------------------------------------
+#
+# Each setting is named GEMINI_*, and two of them have a second name that Google's
+# own SDKs read for themselves:
+#
+#   GEMINI_*  the canonical name, and all the official endpoint needs
+#   GOOGLE_*  borrowed aliases, accepted for the two settings where such a name
+#             exists (GOOGLE_API_KEY, GOOGLE_GEMINI_BASE_URL)
+#
+# A name is skipped when it is absent OR empty, so `GEMINI_API_KEY=` cannot fall
+# through to the alias.  GEMINI_RESPONSE_MODALITIES is the one exception, and
+# resolves by presence instead -- see response_modalities().
+#
+# The borrowed GOOGLE_* aliases are consulted only when the project's own name is
+# absent from the environment ENTIRELY.  Without that rule an ambient
+# GOOGLE_API_KEY, exported for some other Google tool, would silently outrank a
+# correctly configured .env.
+
+
+def resolve_env(name: str, borrowed: tuple[str, ...] = (), default: str = "") -> str:
+    """First non-empty value in this setting's chain, else `default`.
+
+    The borrowed aliases are consulted only when `name` is absent from the
+    environment entirely -- not merely empty.  The difference is load-bearing:
+    `GEMINI_API_KEY=` is a deliberate "no key here", and a resolver that read the
+    alias then would spend whatever ambient credential happened to be exported.
+    """
+    value = os.getenv(name)
+    if value is not None and value.strip():
+        return value.strip()
+    if borrowed and name not in os.environ:
+        for candidate in borrowed:
+            value = os.getenv(candidate)
+            if value is not None and value.strip():
+                return value.strip()
+    return default
+
+
+def response_modalities() -> tuple[str, ...]:
+    """The responseModalities to ask for, resolved by PRESENCE rather than value.
+
+    Unset means "ask for an image", which is why this tool exists.  Set-but-empty
+    means "send no responseModalities at all", for endpoints that reject the
+    field.  Those are genuinely different behaviours, so presence decides: the
+    variable wins even when blank.
+    """
+    if "GEMINI_RESPONSE_MODALITIES" in os.environ:
+        return tuple(
+            item.strip().upper() for item in os.environ["GEMINI_RESPONSE_MODALITIES"].split(",")
+            if item.strip()
+        )
+    return ("TEXT", "IMAGE")
+
+
+def upstream_env() -> dict[str, str]:
+    """Every upstream setting, resolved once.
+
+    Single authority for the CLI, the web server's /api/meta and its startup
+    banner -- resolving independently in three places is how they drift apart.
+    """
+    return {
+        "api_key": resolve_env("GEMINI_API_KEY", ("GOOGLE_API_KEY",)),
+        "base_url": resolve_env("GEMINI_BASE_URL", ("GOOGLE_GEMINI_BASE_URL",),
+                                DEFAULT_BASE_URL),
+        "model": resolve_env("GEMINI_MODEL"),
+        "api_version": resolve_env("GEMINI_API_VERSION", default=DEFAULT_API_VERSION),
+        "timeout": resolve_env("GEMINI_TIMEOUT", default="180"),
+        "image_size": resolve_env("GEMINI_IMAGE_SIZE"),
+    }
+
+
+def upstream_configured(env: dict[str, str] | None = None) -> bool:
+    """Whether a model call can be attempted at all. The base URL always has a
+    value now (the official endpoint), so only the credential and the model can
+    be missing."""
+    env = env or upstream_env()
+    return bool(env["api_key"] and env["model"])
+
+
 def parse_size(value: str) -> tuple[int, int]:
     match = re.fullmatch(r"\s*(\d+)(?:[xX](\d+))?\s*", value)
     if not match:
@@ -199,30 +291,21 @@ def build_config(args: argparse.Namespace) -> Config:
     prompt = args.prompt or os.getenv("PIXEL_PROMPT", DEFAULT_PROMPT)
     prompt = prompt.replace("{width}", str(size[0])).replace("{height}", str(size[1]))
 
-    base_url = os.getenv("NEWAPI_BASE_URL", "").strip()
-    api_key = os.getenv("NEWAPI_API_KEY", "").strip()
-    model = os.getenv("NEWAPI_MODEL", "").strip()
-    api_version = os.getenv("NEWAPI_API_VERSION", DEFAULT_API_VERSION).strip() or DEFAULT_API_VERSION
-
-    # Unset -> ask for an image, since that is why this tool exists. Set but
-    # empty -> send no responseModalities at all, for gateways that reject the
-    # field. (An empty value must not silently fall back, or there is no way to
-    # turn the field off.)
-    modalities_raw = os.getenv("NEWAPI_RESPONSE_MODALITIES")
-    if modalities_raw is None:
-        response_modalities = ("TEXT", "IMAGE")
-    else:
-        response_modalities = tuple(
-            item.strip().upper() for item in modalities_raw.split(",") if item.strip()
-        )
+    env = upstream_env()
+    base_url = env["base_url"]
+    api_key = env["api_key"]
+    model = env["model"]
+    api_version = env["api_version"]
+    modalities = response_modalities()
 
     if not args.pixelize_only:
+        # Only these two can be missing: the base URL falls back to the official
+        # endpoint, so a Google key plus a model is a complete configuration.
         missing = [
             name
             for name, value in (
-                ("NEWAPI_BASE_URL", base_url),
-                ("NEWAPI_API_KEY", api_key),
-                ("NEWAPI_MODEL", model),
+                ("GEMINI_API_KEY", api_key),
+                ("GEMINI_MODEL", model),
             )
             if not value
         ]
@@ -237,7 +320,7 @@ def build_config(args: argparse.Namespace) -> Config:
         api_key=api_key,
         model=model,
         api_version=api_version,
-        timeout=float(os.getenv("NEWAPI_TIMEOUT", "180")),
+        timeout=float(env["timeout"]),
         size=size,
         scale=args.scale if args.scale is not None else int(os.getenv("PIXEL_SCALE", "8")),
         max_colors=(
@@ -248,8 +331,8 @@ def build_config(args: argparse.Namespace) -> Config:
         palette=palette,
         prompt=prompt,
         keep_raw=args.keep_raw or env_bool("PIXEL_KEEP_RAW", True),
-        response_modalities=response_modalities,
-        image_size=os.getenv("NEWAPI_IMAGE_SIZE", "").strip(),
+        response_modalities=modalities,
+        image_size=env["image_size"],
     )
 
 
@@ -267,6 +350,13 @@ def api_url(base_url: str, api_version: str, model: str) -> str:
         f"{base_url.rstrip('/')}/{api_version.strip('/')}"
         f"/models/{model}:generateContent"
     )
+
+
+def safe_host(url: str) -> str:
+    """Host and port only. A base URL may carry user:pass@ userinfo, and that is a
+    credential the browser must never receive."""
+    without_scheme = re.sub(r"^[a-zA-Z][a-zA-Z0-9+.\-]*://", "", url or "")
+    return without_scheme.split("@")[-1].split("/")[0].split("?")[0]
 
 
 def prepare_image(path: Path) -> tuple[str, str]:
@@ -321,7 +411,7 @@ def build_payload(input_path: Path, config: Config) -> dict[str, Any]:
     }
 
 
-def call_newapi(input_path: Path, config: Config) -> dict[str, Any]:
+def call_gemini(input_path: Path, config: Config) -> dict[str, Any]:
     url = api_url(config.base_url, config.api_version, config.model)
     headers = {
         "x-goog-api-key": config.api_key,
@@ -340,27 +430,27 @@ def call_newapi(input_path: Path, config: Config) -> dict[str, Any]:
         # The message keeps the 1200-byte slice the CLI has always printed; the
         # full body rides on .detail for callers that can show more than a line.
         body = exc.read().decode("utf-8", errors="replace")
-        raise NewAPIHTTPError(
-            f"NewAPI HTTP {exc.code}: {body[:1200]}", status=exc.code, detail=body
+        raise UpstreamHTTPError(
+            f"Upstream HTTP {exc.code}: {body[:1200]}", status=exc.code, detail=body
         ) from exc
     except urllib.error.URLError as exc:
-        raise NewAPITransportError(f"NewAPI connection failed: {exc.reason}") from exc
+        raise UpstreamTransportError(f"Upstream connection failed: {exc.reason}") from exc
 
     try:
         parsed = json.loads(raw.decode("utf-8"))
     except json.JSONDecodeError as exc:
-        # An HTML error page from a reverse proxy is the most common gateway
+        # An HTML error page from a reverse proxy is the most common endpoint
         # failure, and "HTTP 200" alone gives the reader nothing to act on.
-        raise NewAPINonJSONError(
-            f"NewAPI returned non-JSON response (HTTP {status}): "
+        raise UpstreamNonJSONError(
+            f"Upstream returned non-JSON response (HTTP {status}): "
             + raw[:500].decode("utf-8", errors="replace"),
             status=status,
             detail=raw[:4000].decode("utf-8", errors="replace"),
         ) from exc
     if not isinstance(parsed, dict):
-        raise NewAPIProtocolError("NewAPI response must be a JSON object")
+        raise UpstreamProtocolError("Upstream response must be a JSON object")
     if parsed.get("error"):
-        raise NewAPIErrorField(f"NewAPI returned an error: {compact_json(parsed['error'])}")
+        raise UpstreamErrorField(f"Upstream returned an error: {compact_json(parsed['error'])}")
     return parsed
 
 
@@ -476,9 +566,9 @@ def extract_image(response: dict[str, Any]) -> bytes:
         or ((response.get("candidates") or [{}])[0].get("finishReason"))
     )
     raise NoImageExtracted(
-        "NewAPI returned successfully but no image could be extracted. "
-        "Check that NEWAPI_MODEL supports image output and that "
-        "NEWAPI_RESPONSE_MODALITIES includes IMAGE"
+        "The upstream call succeeded but no image could be extracted. "
+        "Check that GEMINI_MODEL supports image output and that "
+        "GEMINI_RESPONSE_MODALITIES includes IMAGE"
         + (f" (upstream reason: {blocked})" if blocked else "")
         + f". Response hint: {compact_json(response)}"
     )
@@ -642,7 +732,7 @@ def save_outputs(input_path: Path, raw: bytes, pixel_image: Any, config: Config,
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Redraw an image as true pixel art through NewAPI")
+    parser = argparse.ArgumentParser(description="Redraw an image as true pixel art with a Gemini image model")
     parser.add_argument("input", type=Path, help="Input image path")
     parser.add_argument("--out-dir", type=Path, default=None, help="Output directory; defaults to PIXEL_OUT_DIR or output")
     parser.add_argument("--size", default=None, help="Logical size, e.g. 64 or 64x48; defaults to PIXEL_SIZE")
@@ -650,8 +740,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-colors", type=int, default=None, help="Maximum colors when PIXEL_PALETTE=auto")
     parser.add_argument("--palette", default=None, help="auto or comma-separated #RRGGBB values")
     parser.add_argument("--prompt", default=None, help="Extra/full redraw prompt")
-    parser.add_argument("--keep-raw", action="store_true", help="Keep the raw image returned by NewAPI")
-    parser.add_argument("--pixelize-only", action="store_true", help="Skip NewAPI and pixelize the input image")
+    parser.add_argument("--keep-raw", action="store_true", help="Keep the raw image returned by the model")
+    parser.add_argument("--pixelize-only", action="store_true", help="Skip the model call and pixelize the input image")
     return parser
 
 
@@ -673,10 +763,11 @@ def main(argv: list[str] | None = None) -> int:
             raw = input_path.read_bytes()
         else:
             print(
-                f"Calling NewAPI model {config.model!r} via {config.api_version} generateContent ...",
+                f"Calling model {config.model!r} via {config.api_version} "
+                f"generateContent at {safe_host(config.base_url)} ...",
                 file=sys.stderr,
             )
-            response = call_newapi(input_path, config)
+            response = call_gemini(input_path, config)
             raw = extract_image(response)
 
         out_dir = Path(args.out_dir or os.getenv("PIXEL_OUT_DIR", "output")).expanduser()

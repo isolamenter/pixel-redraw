@@ -327,7 +327,7 @@ summary{ cursor:pointer; font-size:12.5px; color:var(--fg-dim); }
     <div class="topmeta">
       <span class="chip" id="chip-version">版本 <b>—</b></span>
       <span class="chip" id="chip-model">模型 <b>—</b></span>
-      <span class="chip" id="chip-upstream">网关 <b>—</b></span>
+      <span class="chip" id="chip-upstream">上游 <b>—</b></span>
       <a class="chip chip-err" id="err-badge" href="#console-panel" hidden>0 个错误</a>
     </div>
   </div>
@@ -1454,7 +1454,7 @@ function updateGenerateEnabled() {
   if (!S.uploadBlob) why = "先给一张图。";
   else if (S.running) why = (S.streamState === "upload") ? "正在上传…" : "已有任务在跑（服务端是单任务锁，第二个请求会收到 409 busy）。";
   else if (needsUpstream && !configured) {
-    why = "服务端上报 upstream_configured=false：.env 里的 NEWAPI_BASE_URL / NEWAPI_API_KEY / NEWAPI_MODEL 没配齐，" +
+    why = "服务端上报 upstream_configured=false：.env 里的 GEMINI_API_KEY / GEMINI_MODEL 没配齐，" +
           "现在点只会白等。勾上「仅本地渲染」可以在没有 key 的情况下继续。";
   }
   $("#generate-why").textContent = why;
@@ -2233,7 +2233,7 @@ function applyMeta(meta) {
   $("#chip-version").appendChild(el("b", { text: meta.version || "—" }));
   $("#chip-model").textContent = "模型 ";
   $("#chip-model").appendChild(el("b", { text: meta.model || "—" }));
-  $("#chip-upstream").textContent = "网关 ";
+  $("#chip-upstream").textContent = "上游 ";
   $("#chip-upstream").appendChild(el("b", { text: meta.upstream_configured === false ? "未配置" : "就绪" }));
   if (meta.upstream_host) $("#chip-upstream").title = "host: " + meta.upstream_host;
   if (meta.upstream_configured === false) {
@@ -2357,7 +2357,7 @@ function boot() {
       max_palette_colors: 256, timeout_seconds: 180, preview_scales: {}, upstream_configured: null };
     $("#chip-version").textContent = "版本 —";
     $("#chip-model").textContent = "模型 —";
-    $("#chip-upstream").textContent = "网关 未知（/api/meta 失败）";
+    $("#chip-upstream").textContent = "上游 未知（/api/meta 失败）";
     renderSizes(); renderPresets(); syncPaletteUI(); applyDefaultZoom(); renderStepper();
     updateGenerateEnabled();
   });
