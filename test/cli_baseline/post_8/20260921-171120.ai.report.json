@@ -1,0 +1,28 @@
+{
+  "input": "/Users/akiya/Project/pixel/test/20260921-171120.ai.png",
+  "logical_output": "test/cli_baseline/post_8/20260921-171120.ai.pixel.png",
+  "preview_output": "test/cli_baseline/post_8/20260921-171120.ai.pixel_x8.png",
+  "raw_output": "test/cli_baseline/post_8/20260921-171120.ai.ai.png",
+  "size": [
+    8,
+    8
+  ],
+  "scale": 8,
+  "color_count": 11,
+  "max_colors": 16,
+  "palette": [
+    "#ffffff",
+    "#9e869f",
+    "#e2e9eb",
+    "#fef5ea",
+    "#becfd9",
+    "#becfd7",
+    "#d9b6c7",
+    "#bdced6",
+    "#070706",
+    "#dbd5d4",
+    "#4e4043"
+  ],
+  "model": "gemini-3.1-flash-image-preview",
+  "protocol": "gemini v1beta"
+}
