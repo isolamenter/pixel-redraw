@@ -50,6 +50,100 @@ PALETTE_PRESETS: dict[str, dict] = {
         "verified": True,
         "source": "https://lospec.com/palette-list/pico-8 ; https://pico-8.fandom.com/wiki/Palette ; https://www.lexaloffle.com/gfx/pico8_palette.png ; https://docs.rs/bulb/latest/src/bulb/dither/presets.rs.html",
     },
+    "arne16": {
+        "label": "ARNE 16",
+        "label_zh": "ARNE 16",
+        "colors": (
+            "#000000", "#493c2b", "#be2633", "#e06f8b", "#9d9d9d", "#a46422",
+            "#eb8931", "#f7e26b", "#ffffff", "#1b2632", "#2f484e", "#44891a",
+            "#a3ce27", "#005784", "#31a2f2", "#b2dcef",
+        ),
+        "note": "Arne's general-purpose 16-colour palette: strong warm/cool ramps with a useful dark range.",
+        "note_zh": "Arne 的通用 16 色：暖色、冷色和暗部层次都比较均衡，适合小尺寸像素画。",
+        "verified": True,
+        "source": "https://androidarts.com/palette/16pal.htm ; https://lospec.com/palette-list/arne-16",
+    },
+    "db32": {
+        "label": "DawnBringer 32",
+        "label_zh": "DawnBringer 32",
+        "colors": (
+            "#000000", "#222034", "#45283c", "#663931", "#8f563b", "#df7126",
+            "#d9a066", "#eec39a", "#fbf236", "#99e550", "#6abe30", "#37946e",
+            "#4b692f", "#524b24", "#323c39", "#3f3f74", "#306082", "#5b6ee1",
+            "#639bff", "#5fcde4", "#cbdbfc", "#ffffff", "#9badb7", "#847e87",
+            "#696a6a", "#595652", "#76428a", "#ac3232", "#d95763", "#d77bba",
+            "#8f974a", "#8a6f30",
+        ),
+        "note": "DawnBringer's 32-colour multipurpose palette, with more hue and skin-tone room than DB16.",
+        "note_zh": "DawnBringer 的 32 色通用调色板，比 DB16 有更多色相和肤色空间。",
+        "verified": True,
+        "source": "https://pixeljoint.com/forum/printer_friendly_posts.asp?TID=16247 ; https://lospec.com/palette-list/dawnbringer-32 ; https://github.com/aseprite/aseprite/blob/main/data/extensions/dawnbringer-palettes/db32.gpl",
+    },
+    "apollo": {
+        "label": "Apollo 46",
+        "label_zh": "Apollo 46",
+        "colors": (
+            "#172038", "#253a5e", "#3c5e8b", "#4f8fba", "#73bed3", "#a4dddb",
+            "#19332d", "#25562e", "#468232", "#75a743", "#a8ca58", "#d0da91",
+            "#4d2b32", "#7a4841", "#ad7757", "#c09473", "#d7b594", "#e7d5b3",
+            "#341c27", "#602c2c", "#884b2b", "#be772b", "#de9e41", "#e8c170",
+            "#241527", "#411d31", "#752438", "#a53030", "#cf573c", "#da863e",
+            "#1e1d39", "#402751", "#7a367b", "#a23e8c", "#c65197", "#df84a5",
+            "#090a14", "#10141f", "#151d28", "#202e37", "#394a50", "#577277",
+            "#819796", "#a8b5b2", "#c7cfcc", "#ebede9",
+        ),
+        "note": "AdamCYounis's saturated 46-colour palette, arranged in compact blue, green, warm, purple and neutral ramps.",
+        "note_zh": "AdamCYounis 的高饱和 46 色，覆盖蓝、绿、暖色、紫色和中性色渐变。",
+        "verified": False,
+        "source": "https://lospec.com/palette-list/apollo.txt ; https://lospec.com/adamcyounis ; https://www.youtube.com/watch?v=SQjeNhTp_Xg",
+    },
+    "resurrect64": {
+        "label": "Resurrect 64",
+        "label_zh": "Resurrect 64",
+        "colors": (
+            "#2e222f", "#3e3546", "#625565", "#966c6c", "#ab947a", "#694f62",
+            "#7f708a", "#9babb2", "#c7dcd0", "#ffffff", "#6e2727", "#b33831",
+            "#ea4f36", "#f57d4a", "#ae2334", "#e83b3b", "#fb6b1d", "#f79617",
+            "#f9c22b", "#7a3045", "#9e4539", "#cd683d", "#e6904e", "#fbb954",
+            "#4c3e24", "#676633", "#a2a947", "#d5e04b", "#fbff86", "#165a4c",
+            "#239063", "#1ebc73", "#91db69", "#cddf6c", "#313638", "#374e4a",
+            "#547e64", "#92a984", "#b2ba90", "#0b5e65", "#0b8a8f", "#0eaf9b",
+            "#30e1b9", "#8ff8e2", "#323353", "#484a77", "#4d65b4", "#4d9be6",
+            "#8fd3ff", "#45293f", "#6b3e75", "#905ea9", "#a884f3", "#eaaded",
+            "#753c54", "#a24b6f", "#cf657f", "#ed8099", "#831c5d", "#c32454",
+            "#f04f78", "#f68181", "#fca790", "#fdcbb0",
+        ),
+        "note": "Kerrie Lake's broad 64-colour palette, especially useful for colourful scenes and higher-density output.",
+        "note_zh": "Kerrie Lake 的 64 色通用调色板，适合色彩丰富、密度较高的画面。",
+        "verified": False,
+        "source": "https://lospec.com/palette-list/resurrect-64 ; https://lospec.com/palette-list/resurrect-64.txt ; https://lospec.com/kerrielake",
+    },
+    "hw_cga": {
+        "label": "CGA 16",
+        "label_zh": "CGA 16",
+        "colors": (
+            "#000000", "#0000aa", "#00aa00", "#00aaaa", "#aa0000", "#aa00aa",
+            "#aa5500", "#aaaaaa", "#555555", "#5555ff", "#55ff55", "#55ffff",
+            "#ff5555", "#ff55ff", "#ffff55", "#ffffff",
+        ),
+        "note": "The classic IBM CGA 16-colour table: extremely bright and high-contrast, deliberately unlike modern art palettes.",
+        "note_zh": "经典 IBM CGA 16 色：非常明亮、高对比，风格上明显区别于现代像素画调色板。",
+        "verified": True,
+        "source": "https://paulwratt.github.io/programmers-palettes/HW-CGA/HW-CGA.html ; https://paulwratt.github.io/programmers-palettes/HW-CGA/HW-CGA-hex.html ; https://github.com/denilsonsa/gimp-palettes",
+    },
+    "hw_msx": {
+        "label": "MSX 16",
+        "label_zh": "MSX 16",
+        "colors": (
+            "#000000", "#010101", "#3eb849", "#74d07d", "#5955e0", "#8076f1",
+            "#b95e51", "#65dbef", "#db6559", "#ff897d", "#ccc35e", "#ded087",
+            "#3aa241", "#b766b5", "#cccccc", "#ffffff",
+        ),
+        "note": "A documented HW-MSX 16-colour approximation; real MSX output varies by VDP and video path.",
+        "note_zh": "资料化的 HW-MSX 16 色近似；真实 MSX 画面会因 VDP 和视频输出链路而不同。",
+        "verified": False,
+        "source": "https://paulwratt.github.io/programmers-palettes/HW-MSX/HW-MSX-palettes.html ; https://www.msx.org/forum/msx-talk/graphics-and-music/msx-1-vdp-definitive-hex-code-colors ; https://github.com/reidrac/8-bit-gimp-palettes",
+    },
     "gameboy_dmg": {
         "label": "Game Boy (DMG)",
         "label_zh": "Game Boy（DMG 绿）",
@@ -188,7 +282,7 @@ def self_check() -> None:
 
 def as_meta() -> list[dict]:
     """The preset registry in the shape ``GET /api/meta`` publishes."""
-    return [
+    meta = [
         {
             "id": preset_id,
             "label": preset["label"],
@@ -203,6 +297,9 @@ def as_meta() -> list[dict]:
         }
         for preset_id, preset in PALETTE_PRESETS.items()
     ]
+    # Keep the browser's fixed-palette picker useful at a glance: fewer colours
+    # first, while preserving registry order for equal-sized palettes.
+    return sorted(meta, key=lambda item: item["count"])
 
 
 def resolve(spec: object) -> tuple[str, tuple[tuple[int, int, int], ...]] | tuple[None, None]:

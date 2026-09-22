@@ -23,17 +23,36 @@ import re
 import sys
 import urllib.error
 import urllib.request
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Iterable
 
 
 DEFAULT_PROMPT = """Redraw the provided image as clean, deliberate pixel art.
 Preserve the subject, silhouette, pose, composition, and important colors.
-The target logical canvas is {width}x{height} pixels.
+The target logical canvas is {width}x{height} pixels, derived from the source
+image's aspect ratio and a 256x256 reference canvas.
 Use hard pixel-aligned edges, a limited palette, crisp clusters, and no
 anti-aliasing, blur, photographic texture, smooth gradients, text, or watermark.
 Return one edited image only; do not return an explanation or a code block."""
+
+REFINE_PROMPT = """Repaint the first image as finished, hand-placed pixel art.
+The first image is a locally pixelized draft already reduced to the requested
+logical grid and palette, then enlarged with nearest-neighbour sampling. Treat
+its block structure as the target pixel design; do not add high-resolution
+detail between those blocks. The second image is the original subject
+reference, not a texture to trace.
+Keep the draft's subject, pose, framing and recognizable features, but redesign
+its pixel shapes at a {width}x{height} logical grid. Make the outer silhouette
+read cleanly; use deliberate, rhythmic stair steps on curves and consistent
+outline weight. Join fragmented pixels into confident clusters of light and
+shadow. Simplify small hair strands and clothing folds while keeping the eyes,
+face and other focal details readable. Remove stray pixels, uneven edge noise,
+blur, anti-aliasing, soft gradients and high-resolution linework. Do not merely
+sharpen, resize or recolor the draft: redraw its shapes. Return one final image
+only, with no explanation or comparison sheet."""
+
+REFERENCE_CANVAS = 256
 
 DATA_URI_RE = re.compile(r"data:image/[^;]+;base64,([A-Za-z0-9+/=\s]+)")
 URL_RE = re.compile(r"https?://[^\s)\]}>\"']+")
@@ -135,6 +154,15 @@ class Config:
     keep_raw: bool
     response_modalities: tuple[str, ...]
     image_size: str
+    # ``size`` is the actual output size after the source dimensions are known.
+    # ``base_size`` is the selected density on the reference canvas. Keeping both
+    # prevents a 1024px source from being mistaken for a literal 64x64 output.
+    base_size: tuple[int, int] | None = None
+    source_size: tuple[int, int] | None = None
+    prompt_template: str = ""
+    refine_prompt: str = ""
+    refine_prompt_template: str = ""
+    passes: int = 2
 
 
 def load_dotenv(path: Path = Path(".env")) -> None:
@@ -262,6 +290,48 @@ def parse_size(value: str) -> tuple[int, int]:
     return width, height
 
 
+def proportional_size(source_size: tuple[int, int], base_size: tuple[int, int],
+                      reference: int = REFERENCE_CANVAS) -> tuple[int, int]:
+    """Map a source image onto a density measured on a reference canvas.
+
+    A 256x256 source at density 64 becomes 64x64. A 1024x1024 source at the
+    same density becomes 256x256. Width and height are scaled independently by
+    the same reference, so non-square images keep their aspect ratio.
+    """
+    if reference < 1:
+        raise SizeError("Reference canvas must be positive")
+    source_width, source_height = source_size
+    base_width, base_height = base_size
+    if source_width < 1 or source_height < 1:
+        raise SizeError("Source image dimensions must be positive")
+    return (
+        max(1, int(round(source_width * base_width / reference))),
+        max(1, int(round(source_height * base_height / reference))),
+    )
+
+
+def configure_for_source(config: Config, source_size: tuple[int, int]) -> Config:
+    """Resolve the actual output grid from the selected density and source size."""
+    base_size = config.base_size or config.size
+    output_size = proportional_size(source_size, base_size)
+    template = config.prompt_template or config.prompt
+    prompt = template.replace("{width}", str(output_size[0])).replace(
+        "{height}", str(output_size[1])
+    )
+    refine_template = config.refine_prompt_template or config.refine_prompt or REFINE_PROMPT
+    refine_prompt = refine_template.replace("{width}", str(output_size[0])).replace(
+        "{height}", str(output_size[1])
+    )
+    return replace(
+        config,
+        size=output_size,
+        base_size=base_size,
+        source_size=source_size,
+        prompt=prompt,
+        refine_prompt=refine_prompt,
+    )
+
+
 def parse_palette(value: str) -> tuple[tuple[int, int, int], ...] | None:
     value = value.strip()
     if not value or value.lower() in {"auto", "none"}:
@@ -286,10 +356,13 @@ def parse_palette(value: str) -> tuple[tuple[int, int, int], ...] | None:
 
 
 def build_config(args: argparse.Namespace) -> Config:
-    size = parse_size(args.size or os.getenv("PIXEL_SIZE", "64x64"))
+    size = parse_size(args.size or os.getenv("PIXEL_SIZE", "32x32"))
     palette = parse_palette(args.palette or os.getenv("PIXEL_PALETTE", "auto"))
-    prompt = args.prompt or os.getenv("PIXEL_PROMPT", DEFAULT_PROMPT)
-    prompt = prompt.replace("{width}", str(size[0])).replace("{height}", str(size[1]))
+    prompt_template = args.prompt or os.getenv("PIXEL_PROMPT", DEFAULT_PROMPT)
+    refine_prompt_template = os.getenv("PIXEL_REFINE_PROMPT", REFINE_PROMPT)
+    prompt = prompt_template.replace("{width}", str(size[0])).replace(
+        "{height}", str(size[1])
+    )
 
     env = upstream_env()
     base_url = env["base_url"]
@@ -297,6 +370,13 @@ def build_config(args: argparse.Namespace) -> Config:
     model = env["model"]
     api_version = env["api_version"]
     modalities = response_modalities()
+    passes = getattr(args, "passes", None)
+    try:
+        passes = int(passes if passes is not None else os.getenv("PIXEL_GENERATION_PASSES", "2"))
+    except (TypeError, ValueError) as exc:
+        raise ConfigError("PIXEL_GENERATION_PASSES must be 1 or 2") from exc
+    if passes not in (1, 2):
+        raise ConfigError("PIXEL_GENERATION_PASSES must be 1 or 2")
 
     if not args.pixelize_only:
         # Only these two can be missing: the base URL falls back to the official
@@ -333,6 +413,10 @@ def build_config(args: argparse.Namespace) -> Config:
         keep_raw=args.keep_raw or env_bool("PIXEL_KEEP_RAW", True),
         response_modalities=modalities,
         image_size=env["image_size"],
+        base_size=size,
+        prompt_template=prompt_template,
+        refine_prompt_template=refine_prompt_template,
+        passes=passes,
     )
 
 
@@ -383,8 +467,72 @@ def prepare_image(path: Path) -> tuple[str, str]:
     return "image/png", base64.b64encode(buffer.getvalue()).decode("ascii")
 
 
-def build_payload(input_path: Path, config: Config) -> dict[str, Any]:
+def _pixelize_frame(source: Any, config: Config, size: tuple[int, int],
+                    preserve_clusters: bool = False) -> Any:
+    """Resize and quantize once; sample model-drawn clusters without averaging them."""
+    Image, _, _ = require_pillow()
+    rgba = source.convert("RGBA")
+    solid = rgba.getchannel("A").point(lambda value: 255 if value >= 128 else 0)
+    sampler = Image.Resampling.NEAREST if preserve_clusters else Image.Resampling.BOX
+    alpha = solid.resize(size, sampler).point(
+        lambda value: 255 if value >= 128 else 0
+    )
+    rgb = rgba.convert("RGB").resize(size, sampler)
+
+    if config.palette:
+        rgb = nearest_palette(rgb, config.palette)
+    else:
+        rgb = rgb.quantize(
+            colors=config.max_colors,
+            method=Image.Quantize.MEDIANCUT,
+            dither=Image.Dither.NONE,
+        ).convert("RGB")
+
+    rgb.putalpha(alpha)
+    return rgb
+
+
+def build_reference_image(path: Path, config: Config) -> tuple[str, str]:
+    """Build the low-resolution pixel-grid guide sent alongside the source.
+
+    The original image remains the primary input. The guide is only a second,
+    nearest-neighbour-expanded reference that tells the model which broad
+    shapes and colour clusters must survive the requested density.
+    """
+    Image, ImageOps, _ = require_pillow()
+    with Image.open(path) as source:
+        frame = ImageOps.exif_transpose(source).convert("RGBA")
+    logical = _pixelize_frame(frame, config, config.size)
+    guide = logical.resize(frame.size, Image.Resampling.NEAREST)
+    buffer = io.BytesIO()
+    guide.save(buffer, "PNG")
+    return "image/png", base64.b64encode(buffer.getvalue()).decode("ascii")
+
+
+def build_payload(input_path: Path, config: Config, draft: bytes | None = None) -> dict[str, Any]:
+    Image, _, _ = require_pillow()
+    with Image.open(input_path) as probe:
+        if config.source_size != probe.size:
+            config = configure_for_source(config, probe.size)
     mime_type, content = prepare_image(input_path)
+    if draft is None:
+        guide_mime, guide_content = build_reference_image(input_path, config)
+        parts = [
+            {"text": config.prompt},
+            {"text": "The first image is the original source. Preserve its subject and composition."},
+            {"inline_data": {"mime_type": mime_type, "data": content}},
+            {"text": "The second image is a pixel-grid and colour-cluster guide. Use it to keep the requested density; do not treat its enlarged blocks as extra detail."},
+            {"inline_data": {"mime_type": guide_mime, "data": guide_content}},
+        ]
+    else:
+        review = build_refine_reference(draft, config)
+        parts = [
+            {"text": config.refine_prompt or REFINE_PROMPT},
+            {"text": "The first image is the locally pixelized draft to repaint."},
+            {"inline_data": {"mime_type": "image/png", "data": base64.b64encode(review).decode("ascii")}},
+            {"text": "The second image is the original subject reference."},
+            {"inline_data": {"mime_type": mime_type, "data": content}},
+        ]
 
     generation_config: dict[str, Any] = {"temperature": 0.2}
     if config.response_modalities:
@@ -401,17 +549,14 @@ def build_payload(input_path: Path, config: Config) -> dict[str, Any]:
         "contents": [
             {
                 "role": "user",
-                "parts": [
-                    {"text": config.prompt},
-                    {"inline_data": {"mime_type": mime_type, "data": content}},
-                ],
+                "parts": parts,
             }
         ],
         "generationConfig": generation_config,
     }
 
 
-def call_gemini(input_path: Path, config: Config) -> dict[str, Any]:
+def call_gemini(input_path: Path, config: Config, draft: bytes | None = None) -> dict[str, Any]:
     url = api_url(config.base_url, config.api_version, config.model)
     headers = {
         "x-goog-api-key": config.api_key,
@@ -419,7 +564,7 @@ def call_gemini(input_path: Path, config: Config) -> dict[str, Any]:
         "Content-Type": "application/json",
         "User-Agent": "pixel-redraw-mvp/0.1",
     }
-    body = json.dumps(build_payload(input_path, config)).encode("utf-8")
+    body = json.dumps(build_payload(input_path, config, draft=draft)).encode("utf-8")
 
     request = urllib.request.Request(url, data=body, headers=headers, method="POST")
     try:
@@ -594,109 +739,36 @@ def nearest_palette(image: Any, palette: tuple[tuple[int, int, int], ...]) -> An
     return output
 
 
-# Mode-voting needs a working palette wide enough that a black outline keeps its
-# own entry instead of merging into dark greys, but narrow enough that "most
-# common color in this block" is still meaningful. Measured on line art, 64
-# reproduces the source's outline coverage far better than 16 or 32 -- at 64x64.
-#
-# The constant is a CAP, not the working size: downscale_preserving_dominance()
-# narrows it to 2*max(blocks) for small canvases, giving 8x8 -> 16 and
-# 16x16 -> 32 while leaving 32x32 and 64x64 at 64.  At 8x8 the wide palette makes
-# the block vote close to a coin flip (measured winner share 0.461 at 64 versus
-# 0.543 at 16) and scatters single-tile black specks; at 32 and above the narrow
-# palette over-represents dark instead, which is the "outline too heavy" failure
-# this constant was originally tuned against.
-MODE_PREQUANTIZE_COLORS = 64
-
-
-def dominant_block_colors(image: Any, blocks_x: int, blocks_y: int, block_size: int) -> Any:
-    """Downscale by picking the most common color in each block, not the average.
-
-    Averaging is wrong for line art: a bold black outline spread across a block
-    gets diluted into grey and the outline disappears. Voting keeps the color
-    that actually covers most of the block, so outlines survive.
-    """
-    Image, _, _ = require_pillow()
-    indices = list(image.getdata())
-    palette = image.getpalette()
-    stride = blocks_x * block_size
-    output = Image.new("RGB", (blocks_x, blocks_y))
-    target = output.load()
-
-    for block_y in range(blocks_y):
-        for block_x in range(blocks_x):
-            counts: dict[int, int] = {}
-            for y in range(block_y * block_size, (block_y + 1) * block_size):
-                start = y * stride + block_x * block_size
-                for index in indices[start : start + block_size]:
-                    counts[index] = counts.get(index, 0) + 1
-            winner = max(counts, key=counts.__getitem__)
-            offset = winner * 3
-            target[block_x, block_y] = (
-                palette[offset],
-                palette[offset + 1],
-                palette[offset + 2],
-            )
-    return output
-
-
-def downscale_preserving_dominance(image: Any, size: tuple[int, int]) -> Any:
-    """Shrink `image` to `size` while preserving flat regions and hard outlines.
-
-    Works in two stages: a generous pre-quantization flattens anti-aliasing so
-    that "most common color" is meaningful per block, then each block votes.
-    Pre-quantizing too aggressively merges the outline into dark greys, which is
-    why the working palette is wider than the final one.
-    """
-    Image, _, _ = require_pillow()
-    width, height = image.size
-    blocks_x, blocks_y = size
-
-    block_size = max(1, round(max(width, height) / max(blocks_x, blocks_y)))
-    if block_size == 1:
-        # Nothing to vote over; plain area averaging is the best available.
-        return image.resize(size, Image.Resampling.BOX)
-
-    working = (blocks_x * block_size, blocks_y * block_size)
-    if working != (width, height):
-        image = image.resize(working, Image.Resampling.BOX)
-
-    # Scale the working palette to the canvas, capped by the tuned constant.
-    colors = min(MODE_PREQUANTIZE_COLORS, 2 * max(blocks_x, blocks_y))
-    quantized = image.quantize(
-        colors=colors,
-        method=Image.Quantize.MEDIANCUT,
-        dither=Image.Dither.NONE,
-    )
-    return dominant_block_colors(quantized, blocks_x, blocks_y, block_size)
-
-
-def pixelize(content: bytes, config: Config) -> Any:
+def pixelize(content: bytes, config: Config, *, preserve_clusters: bool = False) -> Any:
     Image, ImageOps, _ = require_pillow()
     with Image.open(io.BytesIO(content)) as source:
         source = ImageOps.exif_transpose(source).convert("RGBA")
-        # Binarize alpha before shrinking so a block counts as opaque when most
-        # of it is opaque -- the majority vote for transparency.
-        solid = source.getchannel("A").point(lambda value: 255 if value >= 128 else 0)
-        alpha = solid.resize(config.size, Image.Resampling.BOX).point(
-            lambda value: 255 if value >= 128 else 0
-        )
-        rgb = downscale_preserving_dominance(source.convert("RGB"), config.size)
-
-    if config.palette:
-        rgb = nearest_palette(rgb, config.palette)
-    else:
-        rgb = rgb.quantize(
-            colors=config.max_colors,
-            method=Image.Quantize.MEDIANCUT,
-            dither=Image.Dither.NONE,
-        ).convert("RGB")
-
-    rgb.putalpha(alpha)
-    return rgb
+        return _pixelize_frame(source, config, config.size,
+                               preserve_clusters=preserve_clusters)
 
 
-def save_outputs(input_path: Path, raw: bytes, pixel_image: Any, config: Config, out_dir: Path) -> dict[str, Any]:
+def build_refine_reference(content: bytes, config: Config) -> bytes:
+    """Build the image shown to the second model pass.
+
+    The first model output is reduced with the same local pixelizer used for the
+    final result. It is then enlarged with nearest-neighbour sampling so the
+    model can inspect the subject at a useful size while seeing the exact block
+    structure it is expected to refine. ``config.source_size`` keeps the review
+    image aligned with the original aspect ratio.
+    """
+    Image, ImageOps, _ = require_pillow()
+    with Image.open(io.BytesIO(content)) as source:
+        frame = ImageOps.exif_transpose(source).convert("RGBA")
+    target_size = config.source_size or frame.size
+    logical = _pixelize_frame(frame, config, config.size, preserve_clusters=True)
+    review = logical.resize(target_size, Image.Resampling.NEAREST)
+    buffer = io.BytesIO()
+    review.save(buffer, "PNG")
+    return buffer.getvalue()
+
+
+def save_outputs(input_path: Path, raw: bytes, pixel_image: Any, config: Config, out_dir: Path,
+                 refinement_applied: bool = False) -> dict[str, Any]:
     out_dir.mkdir(parents=True, exist_ok=True)
     stem = input_path.stem
     raw_path = out_dir / f"{stem}.ai.png"
@@ -720,12 +792,16 @@ def save_outputs(input_path: Path, raw: bytes, pixel_image: Any, config: Config,
         "preview_output": str(preview_path),
         "raw_output": str(raw_path) if config.keep_raw else None,
         "size": [pixel_image.width, pixel_image.height],
+        "base_size": list(config.base_size or config.size),
+        "reference_canvas": REFERENCE_CANVAS,
+        "source_size": list(config.source_size) if config.source_size else None,
         "scale": config.scale,
         "color_count": len(colors),
         "max_colors": config.max_colors,
         "palette": ["#%02x%02x%02x" % color for _, color in colors],
         "model": config.model or None,
         "protocol": f"gemini {config.api_version}",
+        "refinement_applied": refinement_applied,
     }
     report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     return report
@@ -735,13 +811,15 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Redraw an image as true pixel art with a Gemini image model")
     parser.add_argument("input", type=Path, help="Input image path")
     parser.add_argument("--out-dir", type=Path, default=None, help="Output directory; defaults to PIXEL_OUT_DIR or output")
-    parser.add_argument("--size", default=None, help="Logical size, e.g. 64 or 64x48; defaults to PIXEL_SIZE")
+    parser.add_argument("--size", default=None, help="Density on the 256px reference canvas, e.g. 64 or 64x64; defaults to PIXEL_SIZE")
     parser.add_argument("--scale", type=int, default=None, help="Nearest-neighbor preview scale")
     parser.add_argument("--max-colors", type=int, default=None, help="Maximum colors when PIXEL_PALETTE=auto")
     parser.add_argument("--palette", default=None, help="auto or comma-separated #RRGGBB values")
     parser.add_argument("--prompt", default=None, help="Extra/full redraw prompt")
     parser.add_argument("--keep-raw", action="store_true", help="Keep the raw image returned by the model")
     parser.add_argument("--pixelize-only", action="store_true", help="Skip the model call and pixelize the input image")
+    parser.add_argument("--passes", type=int, choices=(1, 2), default=None,
+                        help="Image-model passes; defaults to PIXEL_GENERATION_PASSES or 2")
     return parser
 
 
@@ -754,11 +832,15 @@ def main(argv: list[str] | None = None) -> int:
         input_path = args.input.expanduser().resolve()
         if not input_path.is_file():
             raise ValueError(f"Input image does not exist: {input_path}")
+        Image, _, _ = require_pillow()
+        with Image.open(input_path) as probe:
+            config = configure_for_source(config, probe.size)
         if config.scale < 1 or config.scale > 32:
             raise ValueError("Scale must be between 1 and 32")
         if config.max_colors < 2 or config.max_colors > 256:
             raise ValueError("Max colors must be between 2 and 256")
 
+        refinement_applied = False
         if args.pixelize_only:
             raw = input_path.read_bytes()
         else:
@@ -769,9 +851,22 @@ def main(argv: list[str] | None = None) -> int:
             )
             response = call_gemini(input_path, config)
             raw = extract_image(response)
+            if config.passes == 2:
+                print("Refining pixel shapes and contours with a second model pass ...",
+                      file=sys.stderr)
+                try:
+                    refined = call_gemini(input_path, config, draft=raw)
+                    raw = extract_image(refined)
+                    refinement_applied = True
+                except (PixelError, OSError, ValueError) as exc:
+                    print(f"Refinement failed ({type(exc).__name__}); using the first draft.",
+                          file=sys.stderr)
 
         out_dir = Path(args.out_dir or os.getenv("PIXEL_OUT_DIR", "output")).expanduser()
-        report = save_outputs(input_path, raw, pixelize(raw, config), config, out_dir)
+        report = save_outputs(input_path, raw,
+                              pixelize(raw, config, preserve_clusters=not args.pixelize_only),
+                              config, out_dir,
+                              refinement_applied=refinement_applied)
         print(json.dumps(report, ensure_ascii=False, indent=2))
         return 0
     except (OSError, ValueError, RuntimeError) as exc:

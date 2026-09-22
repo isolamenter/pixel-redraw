@@ -7,7 +7,3 @@ output/
 runs/
 
 .DS_Store
-
-# Local-only test suite and its PNG baselines (~9.8MB). Anchored to the repo root
-# so a future nested test/ directory is not silently ignored by this rule.
-/test/

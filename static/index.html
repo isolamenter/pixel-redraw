@@ -250,22 +250,43 @@ input[type=checkbox]{ accent-color:var(--accent); width:16px; height:16px; }
   background-size:16px 16px;
   background-position:0 0, 8px 8px;
 }
+.stage-fit{
+  overflow:hidden;
+  padding:8px;
+}
+.stage-pixel-fit{
+  overflow:hidden;
+  padding:8px;
+}
 .stage img{
   display:block; max-width:none; flex:none;
   image-rendering:pixelated;   /* NEAREST: smooth scaling would re-introduce anti-aliasing */
   image-rendering:crisp-edges;
 }
+.stage-fit img{
+  max-width:100%; max-height:100%; width:auto; height:auto;
+  object-fit:contain;
+  image-rendering:auto;
+}
+.stage-pixel-fit img{ max-width:100%; max-height:100%; }
 .stage-empty{ color:var(--fg-faint); font-size:12.5px; text-align:center; padding:16px; }
-.grid2{ display:grid; grid-template-columns:1fr; gap:12px; }
-/* A 1fr track defaults to min-width:auto, so it refuses to shrink below its
-   content's min-content width. These cells hold a 1024px model render and a
-   512px NEAREST preview, which inflated the grid to ~1026px and scrolled the
-   whole page sideways even on a desktop. min-width:0 lets the cell shrink and
-   hands the overflow to .stage's own overflow:auto, which is where it belongs:
-   constraining the <img> instead would scale it by a fraction and put back the
-   uneven pixel sizes that image-rendering:pixelated exists to avoid. */
-.grid2 > *{ min-width:0; }
-@media (min-width:820px){ .grid2.two{ grid-template-columns:1fr 1fr; } }
+.ai-row{ display:grid; grid-template-columns:1fr; gap:12px; margin-bottom:12px; }
+.ai-row > *{ min-width:0; }
+.final-row{ display:grid; grid-template-columns:minmax(0,1fr) 148px; gap:12px; align-items:start; }
+.final-main{ min-width:0; }
+.final-controls{ min-width:0; border:1px solid var(--border); border-radius:9px; padding:10px; background:var(--panel-2); }
+.final-controls .cap{ margin-bottom:8px; }
+.final-controls #zooms{ display:grid; grid-template-columns:1fr 1fr; gap:6px; }
+.final-controls #zooms button{ min-width:0; }
+/* A 1fr track defaults to min-width:auto, so every result card must opt into
+   shrinking. The AI row has two columns on desktop; the final image keeps its
+   own larger stage and puts its zoom controls beside it. */
+@media (min-width:820px){ .ai-row.has-two{ grid-template-columns:1fr 1fr; } }
+@media (max-width:700px){
+  .final-row{ grid-template-columns:1fr; }
+  .final-controls{ order:2; }
+  .final-controls #zooms{ grid-template-columns:repeat(4,1fr); }
+}
 .cap{ font-size:12px; color:var(--fg-dim); margin:0 0 6px; }
 .pal-echo{ display:flex; flex-wrap:wrap; gap:4px; margin:6px 0; }
 .pal-echo span{ display:inline-flex; align-items:center; gap:5px; font-family:var(--mono); font-size:11px;
@@ -317,13 +338,326 @@ summary{ cursor:pointer; font-size:12.5px; color:var(--fg-dim); }
 .empty{ color:var(--fg-faint); font-size:12.5px; margin:6px 0; }
 .hintline{ margin:6px 0 0; font-size:12.5px; color:var(--fg-dim); }
 .warnline{ font-size:12.5px; color:var(--warn); background:var(--warn-soft); border:1px solid var(--warn); border-radius:7px; padding:7px 9px; margin:8px 0 0; }
+
+/* ---------- pixel workbench redesign ----------
+   A compact masthead keeps the tool identity visible without competing with
+   the mosaic workspace below. The existing IDs and runtime DOM contract stay
+   untouched. */
+:root{
+  color-scheme:dark;
+  --bg:#09131d;
+  --panel:#101e2a;
+  --panel-2:#172a39;
+  --panel-3:#20394b;
+  --fg:#e7f0f8;
+  --fg-dim:#9eb2c3;
+  --fg-faint:#6f8799;
+  --border:#294456;
+  --border-2:#45667b;
+  --accent:#86d2ff;
+  --accent-fg:#071722;
+  --accent-soft:#173b52;
+  --ok:#75d6bd;
+  --ok-soft:#123d3d;
+  --warn:#e9bd72;
+  --warn-soft:#3b301d;
+  --err:#ff929f;
+  --err-soft:#422532;
+  --err-border:#784250;
+  --ck:#304b5b;
+  --ck-2:#152734;
+  --code-bg:#071019;
+  --code-fg:#dceeff;
+  --ink:#071019;
+  --ink-soft:#0e2230;
+  --hero-fg:#eaf5ff;
+  --hero-dim:#9db4c7;
+  --grid-line:rgba(134,210,255,.15);
+  --shadow:0 16px 38px rgba(0,0,0,.32);
+}
+html,body{ background:var(--bg); }
+body{
+  font-size:14px;
+  line-height:1.5;
+  letter-spacing:-.005em;
+}
+.wrap{ max-width:1240px; padding-left:24px; padding-right:24px; }
+.top{
+  background:var(--bg);
+  background:color-mix(in srgb,var(--bg) 94%,transparent);
+  border-bottom:1px solid var(--border);
+  backdrop-filter:blur(14px);
+}
+.top-in{ min-height:64px; padding:12px 0; }
+.brand{ gap:10px; font-family:var(--mono); font-size:13px; letter-spacing:.04em; text-transform:uppercase; }
+.logo{
+  display:inline-grid; place-items:center; width:31px; height:31px;
+  background:var(--accent); color:var(--accent-fg); border:1px solid var(--accent);
+  font-size:18px; line-height:1; transform:rotate(-4deg);
+}
+.brand-sub{ color:var(--fg-faint); font-size:10px; letter-spacing:.12em; }
+.topmeta{ gap:7px; }
+.chip{ border-radius:4px; padding:4px 8px; background:var(--panel); border-color:var(--border); }
+.chip b{ font-weight:700; }
+
+main{
+  display:grid;
+  grid-template-columns:repeat(3,minmax(0,1fr));
+  grid-template-areas:
+    "hero hero hero"
+    "input density generation"
+    "palette palette generation"
+    "palette palette console"
+    "result result result"
+    "footer footer footer";
+  gap:18px;
+  padding-top:28px;
+  padding-bottom:72px;
+}
+.hero{
+  grid-area:hero;
+  min-height:104px;
+  display:grid;
+  grid-template-columns:minmax(0,.78fr) minmax(320px,1fr);
+  position:relative;
+  overflow:hidden;
+  background:var(--ink);
+  color:var(--hero-fg);
+  border:1px solid var(--ink);
+  border-radius:14px;
+  box-shadow:var(--shadow);
+}
+.hero-copy{
+  padding:16px 28px; position:relative; z-index:1;
+  display:flex; align-items:center; gap:18px;
+}
+.eyebrow,.hero-label,.hero-corner{
+  font:11px/1.2 var(--mono); letter-spacing:.14em; text-transform:uppercase;
+}
+.eyebrow{ color:var(--accent); margin-bottom:0; white-space:nowrap; }
+.hero h1{
+  margin:0; max-width:none; white-space:nowrap;
+  font:700 clamp(24px,3vw,36px)/.95 var(--mono);
+  letter-spacing:-.075em; text-transform:uppercase;
+}
+.hero h1 em{ color:var(--accent); font-style:normal; }
+.hero-visual{
+  position:relative; min-height:104px; overflow:hidden;
+  background-color:var(--ink-soft);
+  background-image:
+    linear-gradient(var(--grid-line) 1px,transparent 1px),
+    linear-gradient(90deg,var(--grid-line) 1px,transparent 1px);
+  background-size:24px 24px;
+  border-left:1px solid var(--border);
+}
+.hero-visual:before,.hero-visual:after{
+  content:""; position:absolute; border:1px solid rgba(134,210,255,.38);
+}
+.hero-visual:before{ inset:12px 16px; }
+.hero-visual:after{ width:34px; height:34px; right:44px; top:30px; background:var(--accent); border:0; box-shadow:none; }
+.hero-glyph{ display:none; }
+.hero-label{ position:absolute; left:14px; bottom:8px; color:var(--hero-dim); font-size:8px; }
+.hero-corner{ position:absolute; right:15px; bottom:8px; color:var(--accent); font-size:8px; }
+.panel{
+  margin:0; padding:18px; background:var(--panel); border:1px solid var(--border);
+  border-radius:15px; box-shadow:0 4px 18px rgba(0,19,32,.18);
+}
+.input-panel{ grid-area:input; align-self:start; }
+.density-panel{ grid-area:density; }
+.palette-panel{ grid-area:palette; }
+.generate-panel{ grid-area:generation; }
+.result-panel{ grid-area:result; padding:20px; }
+.console{ grid-area:console; min-height:100%; }
+.footer-note{ grid-area:footer; }
+.panel > h2{
+  display:flex; flex-direction:column; gap:3px; margin:0 0 14px;
+  font:700 17px/1.2 var(--mono); letter-spacing:-.035em;
+}
+.panel > h2 .dim{ display:block; font-size:12px; line-height:1.4; letter-spacing:0; }
+h3{ margin-top:20px; font-family:var(--mono); letter-spacing:-.02em; }
+.row{ gap:8px; }
+.row-tight{ gap:6px; }
+.sep{ margin:16px 0; background:var(--border); }
+button,.btn{ border-radius:7px; border-color:var(--border-2); padding:7px 11px; }
+button:hover:not(:disabled),.btn:hover{ background:var(--panel-3); }
+.btn-primary{
+  min-height:44px; justify-content:center; border-color:var(--accent); background:var(--accent);
+  color:var(--accent-fg); font:700 13px var(--mono); letter-spacing:.02em;
+  box-shadow:4px 4px 0 var(--ink);
+}
+.btn-primary:hover:not(:disabled){ background:var(--accent); filter:brightness(1.04); transform:translate(-1px,-1px); }
+.drop{
+  min-height:160px; display:flex; flex-direction:column; justify-content:center; gap:8px;
+  padding:22px 17px; border:1px dashed var(--border-2); border-radius:10px;
+  text-align:left; background:var(--panel-2); position:relative; overflow:hidden;
+}
+.drop:before{ content:"DROP / PASTE"; position:absolute; top:11px; right:13px; color:var(--fg-faint); font:10px var(--mono); letter-spacing:.1em; }
+.drop-main{ max-width:220px; font:700 16px/1.2 var(--mono); letter-spacing:-.035em; }
+.drop .tiny{ max-width:260px; }
+.drop.over{ border-color:var(--accent); background:var(--accent-soft); }
+.thumb{ padding-top:12px; border-top:1px solid var(--border); }
+.thumb img{ width:64px; height:64px; border-radius:5px; }
+fieldset{ margin-bottom:0; }
+legend{ margin-bottom:8px; padding:0; font:700 11px/1.3 var(--mono); text-transform:uppercase; letter-spacing:.04em; }
+.sizes{ grid-template-columns:repeat(3,minmax(0,1fr)); gap:6px; }
+.sizes{ grid-auto-rows:84px; }
+.sizes label{ height:100%; min-height:0; gap:6px; padding:8px 7px; border-radius:8px; }
+.sizes .n{ font-size:12px; }
+.sizes .t{ font-size:10px; line-height:1.25; }
+.presets{ grid-template-columns:repeat(2,minmax(0,1fr)); gap:6px; }
+.palette-panel .presets{ grid-template-columns:repeat(auto-fill,minmax(145px,1fr)); }
+.palette-mode{
+  margin-bottom:10px; padding:9px; border:1px solid var(--border-2);
+  border-radius:10px; background:var(--ink-soft);
+}
+.palette-mode .preset{
+  display:grid; grid-template-columns:minmax(120px,.42fr) minmax(0,1fr); align-items:center;
+  gap:10px; width:100%; height:54px; min-height:54px;
+  padding:7px; border-color:transparent; background:transparent;
+}
+.palette-mode .preset[aria-pressed="true"]{ border-color:var(--accent); background:var(--accent-soft); }
+.palette-mode .preset .ph{ min-height:0; }
+.palette-mode .preset .note{ max-height:none; }
+.auto-options{
+  display:flex; align-items:center; gap:8px; min-width:0; padding:8px 7px 1px;
+  border-top:1px solid var(--border); color:var(--fg-dim);
+}
+.auto-options .tiny{ min-width:0; flex:1; }
+.preset{ height:122px; min-height:0; padding:8px; border-radius:8px; overflow:hidden; }
+.preset .ph{ min-height:29px; align-content:flex-start; font-size:12px; gap:4px; line-height:1.2; }
+.preset .pn{ font-size:10px; }
+.preset .note{ max-height:38px; overflow:hidden; font-size:10px; line-height:1.25; }
+.sw{ min-height:10px; gap:1px; margin:6px 0 4px; }
+.sw i{ width:9px; height:9px; }
+.pixelonly{
+  margin:0 0 16px; padding:12px; border:1px solid var(--accent); border-radius:10px;
+  background:var(--accent-soft); box-shadow:inset 4px 0 var(--accent);
+}
+.pixelonly .desc{ font-size:11.5px; line-height:1.45; }
+.generate-panel .row:has(#generate){ align-items:stretch; }
+.generate-panel .row:has(#generate) button{ flex:1; min-height:38px; justify-content:center; }
+.generate-panel #generate{ flex:1; }
+.generate-panel #clear-file{ align-self:center; }
+.generate-panel #repixelize{ width:100%; justify-content:center; }
+.stepper{ display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:5px; }
+.st{ min-width:0; padding:5px 7px; border-radius:5px; font:10px/1.2 var(--mono); }
+.st .el{ font-size:9px; }
+.statusline{ margin-top:14px; padding:10px; background:var(--panel-2); border-radius:8px; font-size:12px; }
+.indet{ margin-top:10px; }
+.indet-lbl{ font-size:10px; line-height:1.35; }
+.upbar{ margin-top:10px; }
+.progress-panel .row[style]{ margin-top:14px !important; }
+.progress-panel .row[style] .tiny{ flex:1; min-width:180px; font-size:10px; line-height:1.3; }
+.generate-panel .progress-panel{ margin-top:18px; padding-top:18px; border-top:1px solid var(--border); }
+.generate-panel .progress-panel h3{ margin:0 0 12px; color:var(--fg); font-size:15px; }
+.stage{
+  height:clamp(360px,52vh,620px); border:1px solid var(--border-2); border-radius:9px;
+  background-color:var(--ck-2); background-image:
+    linear-gradient(45deg,var(--ck) 25%,transparent 25%,transparent 75%,var(--ck) 75%),
+    linear-gradient(45deg,var(--ck) 25%,transparent 25%,transparent 75%,var(--ck) 75%);
+  background-size:22px 22px; background-position:0 0,11px 11px;
+  box-shadow:inset 0 0 0 8px rgba(0,0,0,.08);
+}
+.stage-empty{ max-width:250px; font:12px/1.4 var(--mono); color:var(--fg-dim); }
+.result-panel .ai-row{
+  display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); grid-template-rows:1fr;
+  gap:12px; margin:0;
+}
+.result-panel .ai-row.has-two{ grid-template-columns:repeat(3,minmax(0,1fr)); }
+.result-card{
+  min-width:0; padding:10px; border:1px solid var(--border); border-radius:10px;
+  background:var(--panel-2);
+}
+.result-card .cap{ min-height:30px; margin-bottom:7px; }
+.result-card .stage{
+  width:100%; height:auto; aspect-ratio:1 / 1; min-height:0;
+  border-color:var(--border-2); box-shadow:none;
+}
+.result-card .stage-empty{ max-width:210px; text-align:center; }
+.final-row{ display:flex; flex-direction:column; gap:10px; }
+.final-card .final-main{ min-width:0; }
+.final-card .final-controls{
+  display:flex; align-items:center; gap:8px; flex-wrap:wrap;
+  padding:8px; border:1px solid var(--border);
+}
+.final-card .final-controls .cap{ min-height:0; margin:0; }
+.final-controls #zooms{ display:flex; flex-wrap:wrap; gap:6px; }
+.final-controls #zooms button{ width:64px; height:30px; min-width:64px; padding:0; justify-content:center; }
+.is-disabled,.btn[aria-disabled="true"]{ opacity:.4; cursor:not-allowed; pointer-events:none; }
+.row-tight > button,.row-tight > .btn,.row-tight > a.btn{ min-height:30px; }
+.result-panel #downloads{ display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); }
+.result-panel #downloads .btn{ min-width:0; justify-content:center; text-align:center; }
+.result-panel .copy-actions{ display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); }
+.result-panel .copy-actions #copy-target{ grid-column:1/-1; }
+.result-panel .resource-actions{ display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); }
+.errblock .row-tight button,.errblock .row-tight .btn{ flex:1; min-width:120px; justify-content:center; }
+.cap{ font:11px/1.35 var(--mono); color:var(--fg-dim); text-transform:uppercase; letter-spacing:.025em; }
+.final-controls{ padding:10px; border-radius:9px; background:var(--panel-2); border-color:var(--border); }
+.final-controls #zooms{ grid-template-columns:1fr 1fr; }
+.final-controls #zooms button{ padding:6px 3px; font:11px var(--mono); }
+.result-panel > h3{ margin-top:22px; }
+.result-panel > p.tiny{ max-width:720px; line-height:1.45; }
+.console{ overflow:hidden; }
+.console > h2{ margin-bottom:14px; }
+.console .timeline{ max-height:220px; overflow:auto; padding-right:4px; }
+.errblock{ border-radius:8px; background:var(--panel-2); }
+.footer-note{ margin:0; padding:0 4px; line-height:1.5; }
+@media (max-width:1040px){
+  main{
+    grid-template-columns:minmax(270px,330px) minmax(0,1fr);
+    grid-template-areas:
+      "hero hero"
+      "input density"
+      "palette palette"
+      "generation console"
+      "result result"
+      "footer footer";
+  }
+  .result-panel{ position:static; }
+  .hero{ grid-template-columns:1fr .8fr; }
+  .hero-copy{ padding:16px 22px; gap:14px; }
+  .hero h1{ font-size:clamp(23px,4.3vw,34px); }
+}
+@media (max-width:700px){
+  main{
+    grid-template-columns:minmax(0,1fr);
+    grid-template-areas:"hero" "input" "density" "palette" "generation" "result" "console" "footer";
+  }
+  .hero{ display:block; min-height:166px; }
+  .hero-copy{ display:flex; padding:20px; min-height:78px; }
+  .hero h1{ white-space:normal; }
+  .hero-visual{ min-height:88px; border-left:0; border-top:1px solid var(--border); }
+  .result-panel .ai-row{ grid-template-columns:1fr; grid-template-rows:repeat(3,minmax(0,1fr)); }
+  .result-panel .ai-row.has-two{ grid-template-columns:1fr; }
+  .result-panel{ position:static; }
+}
+@media (max-width:600px){
+  .wrap{ padding-left:14px; padding-right:14px; }
+  main{ gap:12px; padding-top:16px; }
+  .topmeta{ width:100%; margin-left:0; }
+  .top-in{ align-items:flex-start; }
+  .hero-copy{ padding:18px; }
+  .hero h1{ font-size:30px; }
+  .hero-visual:after{ right:48px; top:30px; }
+  .hero-label,.hero-corner{ bottom:13px; }
+  .panel,.result-panel{ padding:15px; }
+  .sizes{ grid-template-columns:repeat(2,minmax(0,1fr)); }
+  .final-row{ grid-template-columns:1fr; }
+  .final-controls{ order:2; }
+  .final-controls #zooms{ grid-template-columns:repeat(4,1fr); }
+  .stage{ height:clamp(300px,68vh,520px); }
+  .result-card .stage{ height:auto; }
+}
+@media (prefers-reduced-motion:reduce){
+  *,*:before,*:after{ animation-duration:.01ms !important; animation-iteration-count:1 !important; transition-duration:.01ms !important; scroll-behavior:auto !important; }
+}
 </style>
 </head>
 <body>
 
 <header class="top">
   <div class="wrap top-in">
-    <span class="brand"><span class="logo" aria-hidden="true">▚</span>pixel-redraw 本地工作台</span>
+    <span class="brand"><span class="logo" aria-hidden="true">▚</span><span>pixel-redraw</span><span class="brand-sub">local pixel lab</span></span>
     <div class="topmeta">
       <span class="chip" id="chip-version">版本 <b>—</b></span>
       <span class="chip" id="chip-model">模型 <b>—</b></span>
@@ -335,9 +669,21 @@ summary{ cursor:pointer; font-size:12.5px; color:var(--fg-dim); }
 
 <main class="wrap">
 
+  <section class="hero" aria-labelledby="hero-title">
+    <div class="hero-copy">
+      <div class="eyebrow">Pixel lab</div>
+      <h1 id="hero-title">Image / <em>Pixels</em></h1>
+    </div>
+    <div class="hero-visual" aria-hidden="true">
+      <div class="hero-glyph">▚</div>
+      <div class="hero-label">256 / REF GRID</div>
+      <div class="hero-corner">LOCAL RENDER</div>
+    </div>
+  </section>
+
   <!-- ============ 错误控制台：常驻、不可关闭、不自动隐藏 ============ -->
   <section class="panel console" id="console-panel" aria-live="polite">
-    <h2>错误控制台 <span class="dim tiny">常驻 · 不自动消失 · 原文照抄（服务端已脱敏），仅技术名词保留英文</span></h2>
+    <h2>错误控制台 <span class="dim tiny">脱敏原文 + 事件时间线</span></h2>
     <div id="console"></div>
     <p class="empty" id="console-empty">暂无错误。</p>
 
@@ -346,26 +692,37 @@ summary{ cursor:pointer; font-size:12.5px; color:var(--fg-dim); }
   </section>
 
   <!-- ============ 输入 ============ -->
-  <section class="panel">
-    <h2>1. 输入图片 <span class="dim tiny">粘贴 / 拖入 / 选择，三条路径共用同一套校验</span></h2>
+  <section class="panel input-panel">
+    <h2>输入图片 <span class="dim tiny">粘贴、拖入或选择</span></h2>
     <label class="drop" id="drop" for="file-input">
       <span class="drop-main">粘贴（Cmd/Ctrl+V）、拖入，或点击选择图片</span>
-      <span class="tiny">支持 PNG / JPEG / GIF / WebP（GIF 只取第一帧）。上传前先在浏览器里检查字节数与像素数，再中心裁剪成正方形。</span>
+      <span class="tiny">支持 PNG / JPEG / GIF / WebP（GIF 只取第一帧）。上传前检查字节数与像素数，保留原图比例，不裁剪。</span>
     </label>
     <input class="sr-only" id="file-input" type="file" accept="image/*">
     <div id="upload-info" class="thumb" style="margin-top:12px" hidden></div>
   </section>
 
-  <!-- ============ 参数 ============ -->
-  <section class="panel">
-    <h2>2. 参数 <span class="dim tiny">尺寸 × 调色板 = 组合搜索；跑完一次之后改这两项只会重渲染，不会重新调用模型</span></h2>
+  <!-- ============ 像素密度 ============ -->
+  <section class="panel density-panel">
+    <h2>像素密度 <span class="dim tiny">以 256×256 为基准，保留原图比例</span></h2>
 
     <fieldset class="sizes-wrap">
-      <legend>输出尺寸（正方形，服务端白名单只认这四个）</legend>
+      <legend>选择输出网格</legend>
       <div class="sizes" id="sizes"></div>
     </fieldset>
+  </section>
 
-    <h3>调色板 <span class="dim tiny">列表来自 <code>GET /api/meta</code>（页面不写死任何色值）</span></h3>
+  <!-- ============ 调色板 ============ -->
+  <section class="panel palette-panel">
+    <h2>调色板 <span class="dim tiny">横向选择，色值来自服务端元数据</span></h2>
+    <div class="palette-mode" id="auto-palette">
+      <div id="auto-choice"></div>
+      <div class="auto-options" id="auto-options">
+        <label for="max-colors" id="max-colors-lbl" hidden>auto 色数上限</label>
+        <select id="max-colors" hidden aria-label="auto 色数上限"></select>
+        <span class="tiny dim" id="max-colors-hint" hidden>仅 auto 模式使用；固定调色板时服务端忽略该项。64 色适合高密度档位，不是低分辨率默认值。</span>
+      </div>
+    </div>
     <div class="presets" id="presets"></div>
 
     <div id="palette-caution"></div>
@@ -377,12 +734,6 @@ summary{ cursor:pointer; font-size:12.5px; color:var(--fg-dim); }
       <span class="tiny dim" id="hex-status"></span>
     </div>
 
-    <div class="row" style="margin-top:10px">
-      <label for="max-colors" id="max-colors-lbl" hidden>auto 色数上限（2–256）</label>
-      <input type="number" id="max-colors" min="2" max="256" step="1" value="16" hidden>
-      <span class="tiny dim" id="max-colors-hint" hidden>仅 auto 模式使用；固定调色板时服务端忽略该项。</span>
-    </div>
-
     <div id="pal-echo-wrap" hidden>
       <h3>服务端确认的调色板 <span class="dim tiny">本次实际使用（由服务端解析后回传，你看到的就是真正跑的那份）</span></h3>
       <div class="pal-echo" id="pal-echo"></div>
@@ -391,8 +742,8 @@ summary{ cursor:pointer; font-size:12.5px; color:var(--fg-dim); }
   </section>
 
   <!-- ============ 生成 ============ -->
-  <section class="panel">
-    <h2>3. 生成</h2>
+  <section class="panel generate-panel">
+    <h2>生成与进度 <span class="dim tiny">先选模式，再观察服务端阶段</span></h2>
 
     <div class="pixelonly">
       <input type="checkbox" id="pixelize-only" aria-describedby="pixelonly-desc">
@@ -400,7 +751,7 @@ summary{ cursor:pointer; font-size:12.5px; color:var(--fg-dim); }
         <label class="lbl" for="pixelize-only">仅本地渲染 (pixelize only)</label>
         <div class="desc" id="pixelonly-desc">
           完全跳过模型调用，直接用本地 Pillow 像素化你上传的原图：<b>0 成本、约 0.15 秒</b>，
-          用来验证「尺寸」和「调色板」两件事，不需要 key。
+          用来验证「密度档位」和「调色板」两件事，不需要 key。
           注意它和下面的「重新渲染」不是一回事：本选项像素化的是<b>你上传的原图</b>，
           重新渲染处理的是<b>模型重绘后的结果</b>。
         </div>
@@ -409,7 +760,7 @@ summary{ cursor:pointer; font-size:12.5px; color:var(--fg-dim); }
 
     <div class="row">
       <button type="button" class="btn-primary" id="generate">开始生成</button>
-      <button type="button" class="btn-sm" id="clear-file" hidden>清除已选图片</button>
+      <button type="button" class="btn-sm" id="clear-file" disabled>清除已选图片</button>
       <span class="tiny dim" id="generate-why"></span>
     </div>
 
@@ -417,13 +768,12 @@ summary{ cursor:pointer; font-size:12.5px; color:var(--fg-dim); }
 
     <div class="row-tight">
       <button type="button" class="btn-sm" id="repixelize" disabled>重新渲染（不用重新调用模型）</button>
-      <span class="tiny dim" id="repixelize-hint">跑完一次之后，改尺寸或调色板会自动调用 <code>POST /api/runs/&lt;id&gt;/repixelize</code>，约 0.13–0.17s，0 token。</span>
+      <span class="tiny dim" id="repixelize-hint">跑完一次之后，改密度档位或调色板会自动调用 <code>POST /api/runs/&lt;id&gt;/repixelize</code>，约 0.13–0.17s，0 token。</span>
     </div>
-  </section>
 
-  <!-- ============ 进度 ============ -->
-  <section class="panel">
-    <h2>4. 进度 <span class="dim tiny">只显示服务端真实发出的事件；模型调用期间没有子进度信号，所以不显示百分比</span></h2>
+    <!-- ============ 进度 ============ -->
+    <div class="progress-panel">
+    <h3>实时进度 <span class="dim tiny">只显示服务端真实发出的事件；模型调用期间没有子进度信号，所以不显示百分比</span></h3>
     <div class="stepper" id="stepper"></div>
 
     <div class="statusline">
@@ -435,7 +785,7 @@ summary{ cursor:pointer; font-size:12.5px; color:var(--fg-dim); }
 
     <div class="indet" id="indet" hidden><i></i></div>
     <div class="indet-lbl" id="indet-lbl" hidden>
-      不确定进度 / indeterminate — 上游那一次 <code>urlopen().read()</code> 是单个不透明请求，没有子进度可报，所以这里故意不给百分比。
+      不确定进度 / indeterminate — 每轮模型调用都是不透明请求，没有子进度可报，所以这里故意不给百分比。
     </div>
 
     <div class="upbar" id="upbar" hidden>
@@ -446,34 +796,50 @@ summary{ cursor:pointer; font-size:12.5px; color:var(--fg-dim); }
 
     <div class="row" style="margin-top:12px">
       <button type="button" class="btn-sm btn-danger" id="cancel" disabled>停止查看（任务继续）</button>
-      <button type="button" class="btn-sm" id="reattach" hidden>重新连接事件流</button>
-      <button type="button" class="btn-sm" id="check-state" hidden>查看服务端状态</button>
+      <button type="button" class="btn-sm" id="reattach" disabled>重新连接事件流</button>
+      <button type="button" class="btn-sm" id="check-state" disabled>查看服务端状态</button>
       <span class="tiny dim">上游请求无法真正中断：这个按钮只停止本页的查看，模型调用与计费可能仍在继续。</span>
+    </div>
     </div>
   </section>
 
   <!-- ============ 结果 ============ -->
-  <section class="panel">
-    <h2>5. 结果 <span class="dim tiny">预览是 &lt;img&gt; + image-rendering:pixelated，不是 canvas；缩放只用整数倍</span></h2>
+  <section class="panel result-panel">
+    <h2>结果 <span class="dim tiny">像素画按整数倍缩放；模型原图自动适配预览框</span></h2>
 
-    <div class="row-tight" style="margin-bottom:8px">
-      <span class="tiny dim">缩放：</span>
-      <span id="zooms" class="row-tight"></span>
-      <span class="kv" id="zoom-info"></span>
-    </div>
-
-    <div class="grid2 two">
-      <div>
-        <p class="cap">真像素画（logical <span id="cap-logical" class="mono">—</span>）<span class="dim">· 棋盘格表示透明</span></p>
-        <div class="stage" id="stage-pixel">
-          <span class="stage-empty">结果预览区（已预留尺寸，出现结果时页面不跳动）</span>
+    <div id="ai-row" class="ai-row result-strip">
+      <div id="draft-wrap" class="result-card">
+        <p class="cap">AI 初稿 <span class="dim">· Pillow 量化</span></p>
+        <div class="stage stage-pixel-fit" id="stage-draft">
+          <span class="stage-empty">等待首轮结果…</span>
         </div>
       </div>
-      <div id="raw-wrap" hidden>
-        <p class="cap">模型原始输出（未过格式层）<span class="dim">· 边缘半透明属正常，见 TECHNICAL.md §7</span></p>
-        <div class="stage" id="stage-raw">
-          <span class="stage-empty">—</span>
+      <div id="raw-wrap" class="result-card">
+        <p class="cap">AI 原始输出 <span class="dim">· 未过格式层</span> · <a class="is-disabled" id="raw-open" href="#" target="_blank" rel="noopener" aria-disabled="true" tabindex="-1">新窗口查看</a></p>
+        <div class="stage stage-fit" id="stage-raw">
+          <span class="stage-empty">等待原始输出…</span>
         </div>
+      </div>
+      <div class="result-card final-card final-row">
+        <div class="final-main">
+          <p class="cap">最终像素图 <span id="cap-logical" class="mono">—</span><span class="dim"> · 棋盘格 = 透明</span></p>
+          <div class="stage" id="stage-pixel">
+            <span class="stage-empty">结果预览区（已预留）</span>
+          </div>
+        </div>
+        <aside class="final-controls">
+          <p class="cap">缩放</p>
+          <span id="zooms" class="row-tight">
+            <button type="button" class="btn-sm" disabled>×1</button>
+            <button type="button" class="btn-sm" disabled>×2</button>
+            <button type="button" class="btn-sm" disabled>×4</button>
+            <button type="button" class="btn-sm" disabled>×8</button>
+            <button type="button" class="btn-sm" disabled>×16</button>
+            <button type="button" class="btn-sm" disabled>×32</button>
+            <button type="button" class="btn-sm" disabled>1:1 真实尺寸</button>
+          </span>
+          <span class="kv" id="zoom-info"></span>
+        </aside>
       </div>
     </div>
 
@@ -481,32 +847,35 @@ summary{ cursor:pointer; font-size:12.5px; color:var(--fg-dim); }
     <div id="result-warn"></div>
 
     <h3>复制图片 <span class="dim tiny">必须同步调用 clipboard.write，且 ClipboardItem 的值是一个 Promise —— 这样才赶得上 Firefox 的 user-gesture 与 WebKit 约 1s 的激活窗口</span></h3>
-    <div class="row-tight">
-      <button type="button" class="btn-sm" id="copy-toggle-preview" aria-pressed="true">复制：nearest 放大预览</button>
-      <button type="button" class="btn-sm" id="copy-toggle-logical" aria-pressed="false">复制：原始 logical</button>
+    <div class="row-tight copy-actions">
+      <button type="button" class="btn-sm" id="copy-toggle-preview" aria-pressed="true" disabled>复制：nearest 放大预览</button>
+      <button type="button" class="btn-sm" id="copy-toggle-logical" aria-pressed="false" disabled>复制：原始 logical</button>
       <button type="button" class="btn-sm" id="copy-png" disabled>复制 PNG</button>
       <button type="button" class="btn-sm" id="copy-datauri" disabled>复制为 data URI 文本</button>
       <span class="tiny dim" id="copy-target"></span>
     </div>
     <p class="tiny dim" style="margin:6px 0 0">
-      默认复制放大预览：把 64×64 直接贴进 Slack / Discord，接收端会用平滑缩放重采样，正好毁掉这套流程要产出的硬边；
+      默认复制放大预览：把小尺寸逻辑图直接贴进 Slack / Discord，接收端会用平滑缩放重采样，正好毁掉这套流程要产出的硬边；
       需要喂素材流水线时请切到「原始 logical」。<b>没有</b>实现 <code>execCommand('copy')</code> 回退：实测它会返回 true 却只在剪贴板留下 text/html。
       复制失败时下方会出现原始报错，请改用下载。
     </p>
 
     <h3>下载 <span class="dim tiny">纯 &lt;a download&gt;，服务端 Cache-Control: no-store</span></h3>
     <div class="row-tight" id="downloads">
-      <span class="tiny dim">尚无结果。</span>
+      <a class="btn btn-sm is-disabled" id="download-draft" href="#" aria-disabled="true" tabindex="-1">下载首轮量化中间图</a>
+      <a class="btn btn-sm is-disabled" id="download-pixel" href="#" aria-disabled="true" tabindex="-1">下载 logical PNG</a>
+      <a class="btn btn-sm is-disabled" id="download-preview" href="#" aria-disabled="true" tabindex="-1">下载 nearest 放大预览</a>
+      <a class="btn btn-sm is-disabled" id="download-raw" href="#" aria-disabled="true" tabindex="-1">下载模型原始输出</a>
     </div>
 
-    <div class="row-tight" style="margin-top:10px">
-      <a class="btn btn-sm" id="link-request" href="#" target="_blank" rel="noopener" hidden>查看本次请求 request.json</a>
-      <a class="btn btn-sm" id="link-response" href="#" target="_blank" rel="noopener" hidden>查看完整响应 response.json</a>
+    <div class="row-tight resource-actions" style="margin-top:10px">
+      <a class="btn btn-sm is-disabled" id="link-request" href="#" target="_blank" rel="noopener" aria-disabled="true" tabindex="-1">查看本次请求 request.json</a>
+      <a class="btn btn-sm is-disabled" id="link-response" href="#" target="_blank" rel="noopener" aria-disabled="true" tabindex="-1">查看完整响应 response.json</a>
       <span class="tiny dim" id="run-id-text"></span>
     </div>
   </section>
 
-  <p class="tiny dim" style="margin:16px 0 0">
+  <p class="tiny dim footer-note" style="margin:16px 0 0">
     页面只把当前 <code>run_id</code> 存进 sessionStorage（刷新后用它重新挂载）；不存任何密钥或配置。
     上游返回的 <code>response.json</code> 只保留 200 字符以内的字符串，密钥由服务端统一脱敏。
   </p>
@@ -575,12 +944,12 @@ var RUN_ID_RE = /^[0-9A-Za-z._-]{1,64}$/;
 var S = {
   meta: null,
   metaFailed: false,
-  uploadBlob: null,        // 裁剪后的正方形 PNG
+  uploadBlob: null,        // 保留原比例的规范化 PNG
   uploadInfo: null,        // {ow, oh, w, h, srcBytes, encBytes}
   uploadName: "",
-  size: 64,
-  paletteMode: "preset",   // preset | auto | custom
-  preset: "pico8",
+  size: 32,
+  paletteMode: "auto",     // preset | auto | custom
+  preset: null,
   maxColors: 16,
   pixelizeOnly: false,
   running: false,
@@ -617,8 +986,9 @@ var S = {
 
 var PHASE_ZH = {
   received: "接收上传", encoding: "编码图片",
-  upstream_wait: "调用模型", upstream_response: "模型已返回",
+  upstream_wait: "生成初稿", upstream_response: "初稿已返回",
   extract_start: "解析响应 / 下载图片", extracted: "已取到图片",
+  refine_wait: "整理轮廓与色块", refine_response: "精修已返回", refined: "最终图已就绪",
   pixelizing: "本地像素化", verifying: "校验调色板子集", saving: "写出文件",
   done: "完成", error: "失败"
 };
@@ -627,16 +997,19 @@ var STAGES = [
   { id: "received", up: false }, { id: "encoding", up: false },
   { id: "upstream_wait", up: true }, { id: "upstream_response", up: true },
   { id: "extract_start", up: true }, { id: "extracted", up: true },
+  { id: "refine_wait", up: true }, { id: "refine_response", up: true },
+  { id: "refined", up: true },
   { id: "pixelizing", up: false }, { id: "verifying", up: false },
   { id: "saving", up: false }
 ];
 /* SSE 的 event 名就是 phase 名，所以必须逐个 addEventListener；这里也作为未知 phase 的兜底名单 */
 var SSE_PHASES = ["received", "encoding", "upstream_wait", "upstream_response",
-  "extract_start", "extracted", "pixelizing", "verifying", "saving", "done", "error"];
+  "extract_start", "extracted", "refine_wait", "refine_response", "refined",
+  "pixelizing", "verifying", "saving", "done", "error"];
 /* CONTRACT.md 点名的、在 8×8 / 16×16 下需要提醒的固定调色板。色值一律来自 /api/meta，
    这里只有 id 与提醒文案；若服务端 preset 自带 min_size / warn_small 字段，则优先用服务端的。 */
 var SMALL_WARN_IDS = { gameboy_dmg: 1, gameboy_bgb: 1, slso8: 1, db16: 1, c64_pepto: 1 };
-var SMALL_WARN_TEXT = "该调色板在 8×8 / 16×16 下颜色会不够用：细节上限由画布尺寸决定，不是越大越好，但太小也会丢掉可辨识度。";
+var SMALL_WARN_TEXT = "该调色板在低密度档位下颜色会不够用：细节上限由实际输出网格决定。";
 
 var KIND_SEV = {
   config: "warn", palette: "warn", size: "warn", limits: "warn", input_image: "warn",
@@ -792,12 +1165,10 @@ function reproCommand(e) {
   var rid = (e && e.run_id) || S.runId || S.completedRunId;
   if (!rid || !RUN_ID_RE.test(rid)) return null;
   var cmd = "python3 pixel_redraw.py runs/" + rid + "/" + rid + ".png";
-  var pal = null, size = null;
+  var pal = null;
   var r = S.result;
   if (r && r.palette_requested && r.palette_requested.length) pal = r.palette_requested.join(",");
-  if (r && r.size && r.size.length === 2) size = r.size[0] + "x" + r.size[1];
-  if (!size) size = S.size + "x" + S.size;
-  cmd += " --palette " + shellQuote(pal || "auto") + " --size " + size;
+  cmd += " --palette " + shellQuote(pal || "auto") + " --size " + S.size + "x" + S.size;
   if (!pal) cmd += " --max-colors " + S.maxColors;
   return cmd;
 }
@@ -1011,17 +1382,18 @@ function report(err, source) {
   else pushError({ kind: "frontend", where: source || "frontend", message: json(err), http_status: null });
 }
 
-/* ---------------- 尺寸：四个 radio，服务端白名单只认这四个 ---------------- */
+/* ---------------- 密度：服务端白名单只认这五档 ---------------- */
 var SIZE_TRUTH = {
   8: "极限抽象，适合图标 / 表情",
-  16: "图标级，细节刚可见",
+  16: "图标级，保留主要轮廓",
   32: "角色 / 道具级",
-  64: "默认，最详细；细节上限由画布决定"
+  64: "细节较丰富，适合角色头像",
+  128: "高密度，适合保留纹理"
 };
 function renderSizes() {
   var box = $("#sizes");
   clear(box);
-  var sizes = (S.meta && S.meta.sizes) || [8, 16, 32, 64];
+  var sizes = (S.meta && S.meta.sizes) || [8, 16, 32, 64, 128];
   sizes.forEach(function (n) {
     var id = "size-" + n;
     var lab = el("label", { for: id });
@@ -1031,11 +1403,11 @@ function renderSizes() {
       if (!input.checked) return;
       S.size = n;
       applyDefaultZoom();
-      scheduleRepixelize("尺寸 → " + n + "x" + n);
+      scheduleRepixelize("密度档位 → " + n + "×" + n + "（256 基准）");
     });
     lab.appendChild(input);
     lab.appendChild(el("span", {}, [
-      el("span", { class: "n", text: n + "×" + n }), el("br"), el("span", { class: "t", text: SIZE_TRUTH[n] || "" })
+      el("span", { class: "n", text: n + "×" + n + " 基准" }), el("br"), el("span", { class: "t", text: SIZE_TRUTH[n] || "" })
     ]));
     box.appendChild(lab);
   });
@@ -1057,10 +1429,12 @@ function cssColor(v) {
 }
 
 function renderPresets() {
+  var autoBox = $("#auto-choice");
   var box = $("#presets");
+  clear(autoBox);
   clear(box);
   var presets = (S.meta && S.meta.presets) || [];
-  box.appendChild(presetButton({
+  autoBox.appendChild(presetButton({
     id: "auto", label: "auto", label_zh: "自动", colors: [],
     note: "may use colours outside any palette",
     note_zh: "可能使用任何调色板之外的颜色", auto: true
@@ -1069,9 +1443,26 @@ function renderPresets() {
   markSelectedPreset();
 }
 
+function renderMaxColorChoices() {
+  var select = $("#max-colors");
+  var choices = (S.meta && S.meta.color_choices) || [8, 12, 16, 24, 32, 48, 64];
+  clear(select);
+  choices.forEach(function (n) {
+    select.appendChild(el("option", { value: String(n), text: n + " 色" }));
+  });
+  var wanted = String(S.maxColors || 16);
+  var found = false;
+  for (var i = 0; i < choices.length; i++) if (String(choices[i]) === wanted) found = true;
+  if (!found) wanted = String(choices[0] || 16);
+  select.value = wanted;
+  S.maxColors = parseInt(wanted, 10);
+}
+
 function presetButton(p) {
   var isAuto = !!p.auto || p.id === "auto";
-  var btn = el("button", { type: "button", class: "preset", "data-id": p.id });
+  var btn = el("button", {
+    type: "button", class: "preset" + (isAuto ? " auto-preset" : ""), "data-id": p.id
+  });
   var head = el("div", { class: "ph" });
   head.appendChild(el("span", { text: p.label_zh || p.label || p.id }));
   if (!isAuto && typeof p.count === "number") head.appendChild(el("span", { class: "pn", text: p.count + " 色" }));
@@ -1079,8 +1470,8 @@ function presetButton(p) {
   btn.appendChild(head);
   if (!isAuto && p.colors && p.colors.length) btn.appendChild(swatchStrip(p.colors, 16));
   var note = p.note_zh || p.note;
-  if (note) btn.appendChild(el("span", { class: "note", text: note }));
-  if (isAuto) btn.appendChild(el("span", { class: "note", text: "跳过调色板约束，用 median-cut 量化到 max_colors。" }));
+  if (note && !isAuto) btn.appendChild(el("span", { class: "note", text: note }));
+  if (isAuto) btn.appendChild(el("span", { class: "note", text: "不绑定固定色板，按 max colors 自动量化。" }));
   btn.addEventListener("click", function () {
     if (isAuto) {
       S.paletteMode = "auto";
@@ -1100,7 +1491,7 @@ function presetButton(p) {
 }
 
 function markSelectedPreset() {
-  var btns = document.querySelectorAll("#presets .preset");
+  var btns = document.querySelectorAll("#auto-choice .preset, #presets .preset");
   for (var i = 0; i < btns.length; i++) {
     var id = btns[i].getAttribute("data-id");
     var on = (S.paletteMode === "preset" && id === S.preset) ||
@@ -1144,6 +1535,7 @@ function paletteForRequest() {
 function syncPaletteUI() {
   markSelectedPreset();
   var auto = S.paletteMode === "auto";
+  $("#auto-options").hidden = !auto;
   $("#max-colors").hidden = !auto;
   $("#max-colors-lbl").hidden = !auto;
   $("#max-colors-hint").hidden = !auto;
@@ -1161,7 +1553,7 @@ function syncPaletteUI() {
       warn = p.weak_at.indexOf(S.size) >= 0;
       if (warn) {
         text = "服务端标注这套色板在 " + p.weak_at.map(function (n) { return n + "×" + n; }).join(" / ") +
-               " 下颜色会不够用：细节上限由画布尺寸决定，不是越大越好，但太小也会丢掉可辨识度。";
+               " 密度档位下颜色会不够用：细节上限由实际输出网格决定。";
       }
     } else if (p) {
       /* 服务端没给 weak_at（只按 CONTRACT.md 实现的那一版没有这个字段）时的保守退路 */
@@ -1170,7 +1562,7 @@ function syncPaletteUI() {
       else if (SMALL_WARN_IDS[p.id]) { warn = true; }
     }
     if (warn) {
-      caution.appendChild(el("div", { class: "caution", text: "⚠ " + S.size + "×" + S.size + " + " +
+      caution.appendChild(el("div", { class: "caution", text: "⚠ " + S.size + "×" + S.size + " 基准 + " +
         ((p && (p.label_zh || p.label)) || S.preset) + "：" + text }));
     }
   }
@@ -1315,15 +1707,13 @@ function decodeAndCrop(file, source, dim) {
     var w = bmp.width, h = bmp.height;
     var bad = verdictOnDimensions(w, h, source + " / decoded");
     if (bad) { if (bmp.close) bmp.close(); pushError(bad, { source: source }); return; }
-    /* 中心裁剪成正方形，1:1 绘制（不缩放，所以不存在插值问题）。
-       四个可选尺寸都是正方形，服务端也总是下发 aspectRatio 1:1，这是唯一需要处理的比例问题。 */
-    var side = Math.min(w, h);
-    var sx = Math.floor((w - side) / 2), sy = Math.floor((h - side) / 2);
+    /* 保留原图比例，服务端会以 256×256 为基准计算实际输出网格。
+       这里不缩放、不裁剪，canvas 只用于把 GIF/HEIC 等统一编码成 PNG。 */
     var cv = document.createElement("canvas");
-    cv.width = side; cv.height = side;
+    cv.width = w; cv.height = h;
     var ctx = cv.getContext("2d");
     ctx.imageSmoothingEnabled = false;
-    ctx.drawImage(bmp, sx, sy, side, side, 0, 0, side, side);
+    ctx.drawImage(bmp, 0, 0, w, h);
     if (bmp.close) bmp.close();
     return new Promise(function (resolve) {
       cv.toBlob(function (blob) {
@@ -1333,20 +1723,20 @@ function decodeAndCrop(file, source, dim) {
           return;
         }
         /* base64 会膨胀 4/3，而服务端的 12 MiB 上限查的是整个 body 的 Content-Length，
-           所以裁剪后的编码结果也要按同一把尺子先量一遍。 */
+           所以保留比例后的编码结果也要按同一把尺子先量一遍。 */
         var b64len = Math.ceil(blob.size / 3) * 4;
         var maxBytes = (S.meta && S.meta.max_upload_bytes) || 12582912;
         if (b64len + 512 > maxBytes) {
           pushError({ kind: "limits", where: "client_precheck", phase: "encoding",
-            message: "Cropped PNG encodes to " + num(b64len) + " bytes of base64; the JSON body limit is " +
+            message: "Preserved-aspect PNG encodes to " + num(b64len) + " bytes of base64; the JSON body limit is " +
                      num(maxBytes) + " bytes",
-            detail: "裁剪后 " + side + "x" + side + "，PNG " + fmtBytes(blob.size) + "。",
+            detail: "保留比例 " + w + "x" + h + "，PNG " + fmtBytes(blob.size) + "。",
             hint: "base64 会膨胀 4/3。请先缩小或压缩图片（例如转成 JPEG，或降低分辨率）。",
             http_status: null }, { source: source });
           return;
         }
         S.uploadBlob = blob;
-        S.uploadInfo = { ow: w, oh: h, w: side, h: side, srcBytes: file.size, encBytes: blob.size };
+        S.uploadInfo = { ow: w, oh: h, w: w, h: h, srcBytes: file.size, encBytes: blob.size };
         S.uploadName = file.name || (source + "-image");
         renderUploadInfo(source);
         resolve(blob);
@@ -1363,19 +1753,19 @@ function renderUploadInfo(source) {
   var info = S.uploadInfo;
   var url = URL.createObjectURL(S.uploadBlob);
   S.uploadThumbUrl = url;
-  box.appendChild(el("img", { src: url, alt: "裁剪后的上传图预览" }));
+  box.appendChild(el("img", { src: url, alt: "保留比例的上传图预览" }));
   box.appendChild(el("div", {}, [
     el("div", { text: "已就绪（来源：" + source + "）" }),
     el("div", { class: "kv", text: "原始 " + info.ow + "×" + info.oh + "（" + fmtBytes(info.srcBytes) +
-      "）→ 中心裁剪 " + info.w + "×" + info.h + "（PNG " + fmtBytes(info.encBytes) + "）" }),
+      "）→ 保留比例 " + info.w + "×" + info.h + "（PNG " + fmtBytes(info.encBytes) + "）" }),
     el("div", { class: "kv", text: "上传后 base64 约 " + fmtBytes(Math.ceil(info.encBytes / 3) * 4) })
   ]));
   box.hidden = false;
-  $("#clear-file").hidden = false;
+  $("#clear-file").disabled = false;
   $("#generate-why").textContent = "";
   updateGenerateEnabled();
   addTimeline("-", "input", "已接受图片（" + source + "）",
-    { original: info.ow + "x" + info.oh, cropped: info.w + "x" + info.h, bytes: info.encBytes }, null, "info");
+    { original: info.ow + "x" + info.oh, preserved: info.w + "x" + info.h, bytes: info.encBytes }, null, "info");
 }
 
 /* 三条输入路径 */
@@ -1436,7 +1826,7 @@ $("#clear-file").addEventListener("click", function () {
   S.uploadBlob = null; S.uploadInfo = null;
   $("#upload-info").hidden = true;
   $("#upload-info").textContent = "";
-  $("#clear-file").hidden = true;
+  $("#clear-file").disabled = true;
   updateGenerateEnabled();
 });
 
@@ -1524,9 +1914,10 @@ function resetRunUI() {
   indetEl.hidden = true;
   indetLbl.hidden = true;
   upbarEl.hidden = true;
+  renderIntermediate({ urls: { draft: null } });
   cancelBtn.disabled = false;
-  reattachBtn.hidden = true;
-  checkStateBtn.hidden = true;
+  reattachBtn.disabled = true;
+  checkStateBtn.disabled = true;
   repixelizeBtn.disabled = true;
   addTimeline("-", "start", "开始生成",
     { size: S.size, palette: paletteForRequest(), max_colors: S.maxColors, pixelize_only: S.pixelizeOnly },
@@ -1544,8 +1935,8 @@ function attachToRun(runId) {
   clear(timelineEl);
   timelineEl.appendChild(el("p", { class: "empty", text: "挂到已有任务的事件时间线：" }));
   cancelBtn.disabled = false;
-  reattachBtn.hidden = true;
-  checkStateBtn.hidden = true;
+  reattachBtn.disabled = true;
+  checkStateBtn.disabled = true;
   try { sessionStorage.setItem("pixel_run_id", runId); } catch (e) {}
   addTimeline("-", "attach", "挂到已有任务（GET /events 会从 seq 0 重放，按 seq 去重）", { run_id: runId }, null, "info");
   setStreamState("reconnecting");
@@ -1604,8 +1995,8 @@ function onRunAccepted(data) {
   S.terminalSeen = false;
   upbarEl.hidden = true;
   cancelBtn.disabled = false;
-  reattachBtn.hidden = true;
-  checkStateBtn.hidden = true;
+  reattachBtn.disabled = true;
+  checkStateBtn.disabled = true;
   updateGenerateEnabled();
   repixelizeBtn.disabled = true;
   try { sessionStorage.setItem("pixel_run_id", S.runId); } catch (e) {}
@@ -1666,8 +2057,8 @@ function openStream(runId) {
               "或「重新连接事件流」。",
         http_status: null
       }, { source: "stream" });
-      reattachBtn.hidden = false;
-      checkStateBtn.hidden = false;
+      reattachBtn.disabled = false;
+      checkStateBtn.disabled = false;
     }
     S.disconnects += 1;
     /* 再渲染一次状态行：上面第一次 setStreamState 时 S.disconnects 还是 0，
@@ -1758,11 +2149,22 @@ function handleFrame(evPhase, ev) {
   S.currentPhase = phase;
   addTimeline(data.seq, phase, data.label || PHASE_ZH[phase] || "", data.detail, data.elapsed_ms, "ok");
   renderStepper();
+  if (phase === "refine_wait" && data.detail && data.detail.draft_url) {
+    renderIntermediate({
+      urls: { draft: safeApiUrl(data.detail.draft_url,
+        "/api/runs/" + encodeURIComponent(S.runId) + "/draft.png") },
+      draft_size: data.detail.draft_size || null,
+      draft_scale: data.detail.draft_scale || null
+    });
+  }
   var zh = PHASE_ZH[phase] || phase;
-  if (phase === "upstream_wait") {
+  if (phase === "upstream_wait" || phase === "refine_wait") {
     indetEl.hidden = false;
     indetLbl.hidden = false;
-    setStatus("open", "已向上游发出请求，等待模型返回（10–60s，期间没有子进度信号，所以没有百分比）");
+    setStatus("open", phase === "refine_wait"
+      ? "正在自动整理轮廓与色块，等待第二轮模型返回。"
+      : "正在生成初稿，等待模型返回。"
+    );
     phaseText.textContent = "当前阶段：" + phase + "（" + zh + "）";
   } else {
     phaseText.textContent = "当前阶段：" + phase + "（" + zh + "）";
@@ -1852,7 +2254,11 @@ function normalizeResult(container) {
     color_count: (typeof r.color_count === "number") ? r.color_count : null,
     elapsed_s: (typeof r.elapsed_s === "number") ? r.elapsed_s : null,
     has_raw: !!r.has_raw,
+    draft_size: (r.draft_size && r.draft_size.length >= 2) ? [r.draft_size[0], r.draft_size[1]] : null,
+    draft_scale: (typeof r.draft_scale === "number") ? r.draft_scale : null,
     urls: {
+      draft: base && typeof urls.draft === "string" && urls.draft
+        ? safeApiUrl(urls.draft, base + "/draft.png") : null,
       pixel: base ? safeApiUrl(urls.pixel, base + "/pixel.png") : null,
       preview: base ? safeApiUrl(urls.preview, base + "/preview.png") : null,
       raw: base ? safeApiUrl(urls.raw, base + "/raw.png") : null,
@@ -1892,7 +2298,7 @@ function applyDefaultZoom() {
   var z = ps[String(n)];
   /* preview_scales 是服务端唯一权威的放大倍数；这里只是拿它当屏幕上默认的整数缩放 */
   if (typeof z === "number" && [1, 2, 4, 8, 16, 32].indexOf(z) >= 0) S.zoom = z;
-  else S.zoom = Math.max(1, Math.min(32, Math.floor(512 / n)));
+  else S.zoom = Math.max(1, Math.min(32, Math.floor(256 / n)));
   S.oneToOne = false;
   renderZoom();
 }
@@ -1902,12 +2308,12 @@ function renderZoom() {
   clear(box);
   var steps = [1, 2, 4, 8, 16, 32];
   steps.forEach(function (z) {
-    var b = el("button", { type: "button", class: "btn-sm", text: "×" + z });
+    var b = el("button", { type: "button", class: "btn-sm", disabled: !S.result, text: "×" + z });
     /* 只允许整数倍：非整数缩放会把像素画重新插值成糊的 */
     b.addEventListener("click", function () { S.zoom = z; S.oneToOne = false; syncZoomPressed(); applyZoom(); });
     box.appendChild(b);
   });
-  var one = el("button", { type: "button", class: "btn-sm", text: "1:1 真实尺寸" });
+  var one = el("button", { type: "button", class: "btn-sm", disabled: !S.result, text: "1:1 真实尺寸" });
   one.addEventListener("click", function () { S.oneToOne = true; syncZoomPressed(); applyZoom(); });
   box.appendChild(one);
   syncZoomPressed();
@@ -1921,6 +2327,23 @@ function syncZoomPressed() {
   for (var i = 0; i < btns.length; i++) {
     var on = (i < steps.length) ? (!S.oneToOne && S.zoom === steps[i]) : S.oneToOne;
     btns[i].setAttribute("aria-pressed", on ? "true" : "false");
+    btns[i].disabled = !S.result;
+  }
+}
+
+function setActionLink(link, url, filename, label) {
+  var available = typeof url === "string" && url.length > 0;
+  if (label !== undefined) link.textContent = label;
+  link.classList.toggle("is-disabled", !available);
+  link.setAttribute("aria-disabled", available ? "false" : "true");
+  link.tabIndex = available ? 0 : -1;
+  if (available) {
+    link.href = url;
+    if (filename) link.download = filename;
+    else link.removeAttribute("download");
+  } else {
+    link.removeAttribute("href");
+    link.removeAttribute("download");
   }
 }
 
@@ -1943,7 +2366,14 @@ function renderResult(res) {
   /* 上一个结果的 blob: URL 到这里才回收 —— 之前它一直是屏幕上那张图 */
   S.objectUrls.forEach(function (u) { try { URL.revokeObjectURL(u); } catch (e) {} });
   S.objectUrls = [];
-  $("#cap-logical").textContent = res.size ? (res.size[0] + "×" + res.size[1]) : "—";
+  if (res.size) {
+    var baseLabel = res.base_size ? " · " + res.base_size[0] + "×" + res.base_size[1] + " 基准" : "";
+    $("#cap-logical").textContent = res.size[0] + "×" + res.size[1] + baseLabel;
+  } else {
+    $("#cap-logical").textContent = "—";
+  }
+
+  renderIntermediate(res);
 
   if (!res.urls.pixel) {
     stage.appendChild(el("span", { class: "stage-empty", text: "服务端没有给出图片地址。" }));
@@ -1974,15 +2404,72 @@ function renderResult(res) {
   renderPaletteEcho(res);
   renderResultNotes(res);
 
-  $("#link-request").hidden = !res.urls.request;
-  if (res.urls.request) $("#link-request").href = res.urls.request;
-  $("#link-response").hidden = !res.urls.response;
-  if (res.urls.response) $("#link-response").href = res.urls.response;
+  setActionLink($("#link-request"), res.urls.request);
+  setActionLink($("#link-response"), res.urls.response);
   $("#run-id-text").textContent = res.runId ? ("run_id = " + res.runId) : "";
   var cb = $("#copy-png"), cd = $("#copy-datauri");
+  $("#copy-toggle-preview").disabled = !res.urls.pixel;
+  $("#copy-toggle-logical").disabled = !res.urls.pixel;
   cb.disabled = !res.urls.pixel;
   cd.disabled = !res.urls.pixel;
   renderCopyTarget();
+}
+
+function renderIntermediate(res) {
+  var wrap = $("#draft-wrap"), stage = $("#stage-draft");
+  clear(stage);
+  if (!res.urls.draft) {
+    wrap.hidden = false;
+    stage.appendChild(el("span", { class: "stage-empty", text: "本次运行未生成 AI 初稿。" }));
+    syncAiRowLayout();
+    return;
+  }
+  wrap.hidden = false;
+  syncAiRowLayout();
+  var size = res.draft_size || res.size;
+  var img = el("img", { alt: "首轮 AI 经 Pillow 量化后的中间图" });
+  if (size && size.length >= 2) {
+    img.width = size[0];
+    img.height = size[1];
+    img.dataset.logicalWidth = String(size[0]);
+    img.dataset.logicalHeight = String(size[1]);
+  }
+  img.addEventListener("error", function () {
+    wrap.hidden = false;
+    clear(stage);
+    stage.appendChild(el("span", { class: "stage-empty", text: "AI 初稿暂时无法读取。" }));
+    syncAiRowLayout();
+    addTimeline("-", "draft", "中间图取不到——保留初稿占位区",
+      { url: res.urls.draft }, null, "note");
+  });
+  stage.appendChild(img);
+  img.src = res.urls.draft;
+  applyIntermediateZoom();
+}
+
+function syncAiRowLayout() {
+  var row = $("#ai-row");
+  row.hidden = false;
+  row.classList.remove("has-two");
+}
+
+function integerFitScale(stage, width, height) {
+  var availableWidth = Math.max(1, stage.clientWidth - 16);
+  var availableHeight = Math.max(1, stage.clientHeight - 16);
+  return Math.max(1, Math.min(32, Math.floor(Math.min(
+    availableWidth / width, availableHeight / height
+  ))));
+}
+
+function applyIntermediateZoom() {
+  var stage = $("#stage-draft"), img = stage.querySelector("img");
+  if (!img) return;
+  var width = parseInt(img.dataset.logicalWidth || "", 10);
+  var height = parseInt(img.dataset.logicalHeight || "", 10);
+  if (!width || !height) return;
+  var scale = integerFitScale(stage, width, height);
+  img.style.width = (width * scale) + "px";
+  img.style.height = (height * scale) + "px";
 }
 
 function fetchBlob(url) {
@@ -1996,49 +2483,51 @@ function fetchBlob(url) {
 function renderRaw(res) {
   var wrap = $("#raw-wrap"), stage = $("#stage-raw");
   clear(stage);
-  /* 只有服务端说 has_raw 才渲染这个面板（否则只会得到一个碎图标）；
+  /* 服务端没有保留 raw 时仍保留固定结果槽位，用说明替代碎图标；
      keep_raw 由 .env / 命令行决定，客户端不假设。 */
   if (!res.has_raw || !res.urls.raw) {
-    wrap.hidden = true;
-    $(".grid2").classList.remove("two");     /* 没有原始输出时，预览占满整行 */
+    wrap.hidden = false;
+    stage.appendChild(el("span", { class: "stage-empty", text: "服务端未保留原始输出。" }));
+    syncAiRowLayout();
+    setActionLink($("#raw-open"), null);
     return;
   }
   wrap.hidden = false;
-  $(".grid2").classList.add("two");
+  syncAiRowLayout();
+  setActionLink($("#raw-open"), res.urls.raw);
   var img = el("img", { alt: "模型原始输出" });
   stage.appendChild(img);
   img.addEventListener("error", function () {
     /* has_raw 为真也可能 404（例如 .env 变了）：这里退化成一句说明，而不是一个碎图标 */
-    wrap.hidden = true;
-    $(".grid2").classList.remove("two");
-    addTimeline("-", "raw", "raw.png 取不到（404）——已隐藏原始输出面板",
+    wrap.hidden = false;
+    clear(stage);
+    stage.appendChild(el("span", { class: "stage-empty", text: "原始输出暂时无法读取。" }));
+    syncAiRowLayout();
+    setActionLink($("#raw-open"), null);
+    addTimeline("-", "raw", "raw.png 取不到（404）——保留原始输出占位区",
       { url: res.urls.raw }, null, "note");
   });
   img.src = res.urls.raw;
 }
 
 function renderDownloads(res) {
-  var box = $("#downloads");
-  clear(box);
   var n = res.size ? res.size[0] : S.size;
   var h = res.size ? res.size[1] : S.size;
   var colors = res.color_count !== null ? res.color_count :
     (res.palette_used ? res.palette_used.length : (res.palette_requested ? res.palette_requested.length : 0));
   var base = res.runId || "run";
-  if (res.urls.pixel) {
-    box.appendChild(el("a", { class: "btn btn-sm", href: res.urls.pixel, download: base + "_" + n + "x" + h + "_" + colors + "c.png",
-      text: "下载 logical PNG（" + n + "×" + h + "，默认/批准的外观）" }));
-  }
-  if (res.urls.preview) {
-    box.appendChild(el("a", { class: "btn btn-sm", href: res.urls.preview,
-      download: base + "_" + n + "x" + h + "_" + colors + "c_x" + (res.scale || "N") + ".png",
-      text: "下载 nearest 放大预览（发帖用）" }));
-  }
-  if (res.has_raw && res.urls.raw) {
-    box.appendChild(el("a", { class: "btn btn-sm", href: res.urls.raw, download: base + "_raw.png",
-      text: "下载模型原始输出 raw.png" }));
-  }
-  if (!box.firstChild) box.appendChild(el("span", { class: "tiny dim", text: "服务端没有给出下载地址。" }));
+  var draftSize = res.draft_size || res.size || [S.size, S.size];
+  setActionLink($("#download-draft"), res.urls.draft,
+    base + "_draft_" + draftSize[0] + "x" + draftSize[1] + ".png",
+    "下载首轮量化中间图");
+  setActionLink($("#download-pixel"), res.urls.pixel,
+    base + "_" + n + "x" + h + "_" + colors + "c.png",
+    "下载 logical PNG");
+  setActionLink($("#download-preview"), res.urls.preview,
+    base + "_" + n + "x" + h + "_" + colors + "c_x" + (res.scale || "N") + ".png",
+    "下载 nearest 放大预览");
+  setActionLink($("#download-raw"), res.has_raw ? res.urls.raw : null,
+    base + "_raw.png", "下载模型原始输出");
 }
 
 function renderPaletteEcho(res) {
@@ -2121,7 +2610,7 @@ function doRepixelize(reason) {
       { size: dto.size, scale: dto.scale, elapsed_s: dto.elapsed_s, color_count: dto.color_count }, null, "info");
     finishRun(dto);
     $("#repixelize-hint").textContent = "最近一次 repixelize：" + (dto.elapsed_s !== undefined ? dto.elapsed_s + "s" : "完成") +
-      "，未调用模型。改尺寸或调色板会再次自动触发。";
+      "，未调用模型。改密度档位或调色板会再次自动触发。";
   }).catch(function (err) {
     $("#repixelize-hint").textContent = "repixelize 失败，详见上方错误控制台。";
     report(err, "POST /api/runs/<id>/repixelize");
@@ -2137,6 +2626,8 @@ function renderCopyTarget() {
   var h = res && res.size ? res.size[1] : S.size;
   var scale = (res && res.scale) ? res.scale : 1;
   var pv = $("#copy-toggle-preview"), lg = $("#copy-toggle-logical");
+  pv.disabled = !res;
+  lg.disabled = !res;
   pv.setAttribute("aria-pressed", S.copyTarget === "preview" ? "true" : "false");
   lg.setAttribute("aria-pressed", S.copyTarget === "logical" ? "true" : "false");
   /* 明确写出当前复制的是哪一份，因为两者差一个重采样 */
@@ -2225,9 +2716,9 @@ function initCopy() {
    ===================================================================== */
 function applyMeta(meta) {
   S.meta = meta;
-  S.size = meta.default_size || 64;
-  S.preset = meta.default_preset || "pico8";
-  S.paletteMode = "preset";
+  S.size = meta.default_size || 32;
+  S.preset = null;
+  S.paletteMode = "auto";
   S.maxColors = 16;
   $("#chip-version").textContent = "版本 ";
   $("#chip-version").appendChild(el("b", { text: meta.version || "—" }));
@@ -2244,6 +2735,7 @@ function applyMeta(meta) {
   $("#custom-hex").value = p && p.colors ? p.colors.join(", ") : "";
   renderSizes();
   renderPresets();
+  renderMaxColorChoices();
   syncPaletteUI();
   applyDefaultZoom();
   renderStepper();
@@ -2253,7 +2745,7 @@ function applyMeta(meta) {
 var resizeTimer = null;
 window.addEventListener("resize", function () {
   if (resizeTimer) clearTimeout(resizeTimer);
-  resizeTimer = setTimeout(function () { applyZoom(); }, 120);
+  resizeTimer = setTimeout(function () { applyZoom(); applyIntermediateZoom(); }, 120);
 });
 
 window.addEventListener("error", function (ev) {
@@ -2292,8 +2784,8 @@ function boot() {
       S.running = false;
       updateGenerateEnabled();
       cancelBtn.disabled = true;
-      reattachBtn.hidden = false;
-      checkStateBtn.hidden = false;
+  reattachBtn.disabled = false;
+  checkStateBtn.disabled = false;
       pushError({ kind: "busy", where: "POST /cancel", phase: S.currentPhase,
         message: safeStr(d && d.note || "cancelled"),
         hint: "本页已不再跟踪这个任务。「重新连接事件流」可以从 seq 0 重放，看服务端最终跑成了什么样。",
@@ -2303,7 +2795,7 @@ function boot() {
   reattachBtn.addEventListener("click", function () {
     if (!S.runId) return;
     S.terminalSeen = false;
-    reattachBtn.hidden = true;
+    reattachBtn.disabled = true;
     setStreamState("reconnecting");
     openStream(S.runId);
     startPolling();
@@ -2321,7 +2813,6 @@ function boot() {
   $("#max-colors").addEventListener("change", function (e) {
     var v = parseInt(e.target.value, 10);
     if (isNaN(v)) v = 16;
-    v = Math.max(2, Math.min(256, v));
     e.target.value = String(v);
     S.maxColors = v;
     if (S.paletteMode !== "auto") return;
@@ -2352,13 +2843,14 @@ function boot() {
     S.metaFailed = true;
     report(err, "GET /api/meta");
     /* meta 拿不到时仍然把控件画出来（用契约里的保守缺省），但生成会被挡住 */
-    S.meta = { sizes: [8, 16, 32, 64], default_size: 64, default_preset: "pico8", presets: [],
+    S.meta = { sizes: [8, 16, 32, 64, 128], reference_canvas: 256,
+      color_choices: [8, 12, 16, 24, 32, 48, 64], default_size: 32, default_preset: "pico8", presets: [],
       max_upload_bytes: 12582912, max_image_pixels: 16000000, max_dimension: 4096,
       max_palette_colors: 256, timeout_seconds: 180, preview_scales: {}, upstream_configured: null };
     $("#chip-version").textContent = "版本 —";
     $("#chip-model").textContent = "模型 —";
     $("#chip-upstream").textContent = "上游 未知（/api/meta 失败）";
-    renderSizes(); renderPresets(); syncPaletteUI(); applyDefaultZoom(); renderStepper();
+    renderSizes(); renderPresets(); renderMaxColorChoices(); syncPaletteUI(); applyDefaultZoom(); renderStepper();
     updateGenerateEnabled();
   });
 }

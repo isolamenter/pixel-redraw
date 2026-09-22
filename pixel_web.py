@@ -16,9 +16,9 @@ Three things shape the design:
   requirement 5 directly -- a gateway is free to echo the request header back
   inside a 401 body -- so the rule is: errors are verbatim EXCEPT secrets, and
   the UI says so.
-* The one slow step is a single opaque blocking upstream call with no
-  sub-progress signal, so the progress UI reports stages and elapsed time and
-  never a percentage.
+* Each image-model pass is an opaque blocking upstream call with no
+  sub-progress signal, so the progress UI reports pass stages and elapsed time
+  and never a percentage.
 
 Binds 127.0.0.1 only.  Do not change that: this process holds the API key, and
 a non-loopback address would also break the clipboard API in the browser,
@@ -80,11 +80,12 @@ class PaletteViolationError(pr.PixelError):
 
     kind = "palette_violation"
 
-VERSION = "0.2.0"
+VERSION = "0.3.0"
 ROOT = Path(__file__).resolve().parent
 RUNS_DIR = ROOT / "runs"
 
-SIZES = (8, 16, 32, 64)
+SIZES = (8, 16, 32, 64, 128)
+COLOR_CHOICES = (8, 12, 16, 24, 32, 48, 64)
 MAX_UPLOAD_BYTES = 12 * 1024 * 1024
 MAX_IMAGE_PIXELS = 16_000_000
 MAX_DIMENSION = 4096
@@ -100,7 +101,8 @@ Image.MAX_IMAGE_PIXELS = MAX_IMAGE_PIXELS * 2
 # pair; nothing is emitted on a timer.
 STAGES_MODEL = (
     "received", "encoding", "upstream_wait", "upstream_response",
-    "extract_start", "extracted", "pixelizing", "verifying", "saving", "done",
+    "extract_start", "extracted", "refine_wait", "refine_response", "refined",
+    "pixelizing", "verifying", "saving", "done",
 )
 STAGES_LOCAL = ("received", "encoding", "pixelizing", "verifying", "saving", "done")
 
@@ -134,7 +136,7 @@ KIND_STATUS = {
 KIND_HINT = {
     "config": "检查 .env：GEMINI_API_KEY 和 GEMINI_MODEL 必须有值（GEMINI_BASE_URL 不填就走 Google 官方端点）。密钥只能通过环境变量配置，不要填到网页里。",
     "palette": "调色板写法：#RRGGBB 逗号分隔，也接受 #RGB 简写。",
-    "size": "尺寸只能是 8、16、32、64。",
+    "size": "密度档位只能是 8、16、32、64、128。实际输出尺寸会按原图比例和 256 基准计算。",
     "limits": "图片超过了服务端限制。请先缩小图片再上传。",
     "input_image": "这个文件不是可识别的图片，或者内容已损坏。",
     "upstream_http": "上游拒绝了请求（Google 官方端点，或者你配置的网关）。若报错里提到 responseModalities 或 imageConfig，把 GEMINI_RESPONSE_MODALITIES / GEMINI_IMAGE_SIZE 清空后重试。",
@@ -379,6 +381,8 @@ class Run:
         self.dir = RUNS_DIR / run_id
         self.raw_bytes: bytes | None = None
         self.config: pr.Config | None = None
+        self.draft_size: list[int] | None = None
+        self.draft_scale: int | None = None
 
     # -- events ------------------------------------------------------------
     def emit(self, phase: str, label: str, detail: dict[str, Any] | None = None) -> None:
@@ -477,12 +481,12 @@ def check_image_limits(blob: bytes) -> None:
 
 
 def preview_scale_for(n: int) -> int:
-    """ONE authority for the preview zoom. 8->32, 16->32, 32->16, 64->8.
+    """ONE authority for the preview zoom on the 256px reference canvas.
 
-    64->8 matches the CLI's PIXEL_SCALE=8 and the already-approved
-    test/20260921-171120.pixel_x8.png, so the approved look does not change.
+    The actual output dimensions also depend on the uploaded image, so this is
+    a readable default rather than a claim about the final file dimensions.
     """
-    return max(1, min(32, round(512 / n)))
+    return max(1, min(32, round(pr.REFERENCE_CANVAS / n)))
 
 
 def build_web_config(size: int, palette_spec: Any, max_colors: int, pixelize_only: bool):
@@ -493,11 +497,11 @@ def build_web_config(size: int, palette_spec: Any, max_colors: int, pixelize_onl
     deliberate: build_config substitutes {width}/{height} into the prompt from
     args.size, so routing size through it keeps the prompt and the pixelizer in
     agreement.  Building a config from env and then reassigning .size would ask
-    the model to redraw for 64x64 while the pixelizer produced 8x8, destroying
-    exactly the detail the model bothered to preserve.
+    the model to redraw for one grid while the pixelizer produced another,
+    destroying exactly the detail the model bothered to preserve.
     """
     if size not in SIZES:
-        raise pr.SizeError(f"Unsupported size {size!r}; choose 8, 16, 32 or 64.")
+        raise pr.SizeError(f"Unsupported density {size!r}; choose 8, 16, 32, 64 or 128.")
 
     # main() does these bounds checks, not build_config -- verified: build_config
     # accepts scale=64 and max_colors=1 when the env says so. The web layer has
@@ -579,7 +583,8 @@ def repro_command(run: Run) -> str:
                 suffix = candidate.suffix
                 break
     bits = [f"python3 pixel_redraw.py runs/{run.id}/{run.id}{suffix}", "--pixelize-only"]
-    bits.append(f"--size {run.config.size[0]}x{run.config.size[1]}")
+    base_size = run.config.base_size or run.config.size
+    bits.append(f"--size {base_size[0]}x{base_size[1]}")
     if run.config.palette:
         hexes = ",".join("#%02x%02x%02x" % c for c in run.config.palette)
         bits.append(f"--palette {hexes!r}")
@@ -616,6 +621,10 @@ def work(run: Run, upload: bytes, mime_type: str, filename: str, size: int,
         input_path = run.dir / f"{run.id}{suffix}"
         input_path.write_bytes(upload)
 
+        with Image.open(input_path) as probe:
+            config = pr.configure_for_source(config, probe.size)
+        run.config = config
+
         where = "prepare_image"
         encoded_mime = pr.prepare_image(input_path)[0]
         notes = []
@@ -624,6 +633,8 @@ def work(run: Run, upload: bytes, mime_type: str, filename: str, size: int,
                 notes.append("animated GIF: first frame only")
         run.emit("encoding", "已编码", {"mime_type": encoded_mime, "notes": notes})
 
+        refinement_applied = False
+        draft = None
         if pixelize_only:
             raw = upload
         else:
@@ -644,24 +655,62 @@ def work(run: Run, upload: bytes, mime_type: str, filename: str, size: int,
             # unexplained silence for up to a minute.
             where = "extract_image"
             run.emit("extract_start", "解析响应中", {})
+            raw = pr.extract_image(response)
+            run.emit("extracted", "已取得图片", {"bytes": len(raw)})
+            draft = raw
+
+            if config.passes == 2:
+                # Materialize the exact local intermediate that is shown to the
+                # browser. call_gemini() builds the same image for the request;
+                # this copy is exposed before the second model call starts.
+                draft_image = pr.pixelize(draft, config, preserve_clusters=True)
+                draft_bytes = _png_bytes(draft_image)
+                run.draft_size = [draft_image.width, draft_image.height]
+                run.draft_scale = config.scale
+                run.artifacts["draft.png"] = (draft_bytes, "image/png")
+                (run.dir / f"{run.id}.draft.png").write_bytes(draft_bytes)
+                where = "upstream_refine"
+                run.emit("refine_wait", "整理轮廓与色块中", {
+                    "model": config.model, "host": pr.safe_host(config.base_url),
+                    "draft_url": f"/api/runs/{run.id}/draft.png",
+                    "draft_size": run.draft_size,
+                    "draft_scale": run.draft_scale,
+                })
+                try:
+                    refined_response = pr.call_gemini(input_path, config, draft=draft)
+                    run.emit("refine_response", "精修模型已返回", {
+                        "bytes": len(json.dumps(refined_response, ensure_ascii=False)),
+                    })
+                    raw = pr.extract_image(refined_response)
+                    response = refined_response
+                    refinement_applied = True
+                    run.emit("refined", "已取得最终图", {"bytes": len(raw)})
+                except (pr.PixelError, OSError, ValueError) as exc:
+                    run.emit("refine_response", "精修失败，保留初稿", {
+                        "reason": redact(str(exc), api_key),
+                    })
+                    run.emit("refined", "使用首轮生成图", {"bytes": len(raw)})
+            else:
+                run.emit("refine_wait", "已配置单轮生成", {})
+                run.emit("refine_response", "跳过精修", {})
+                run.emit("refined", "使用首轮生成图", {"bytes": len(raw)})
+
             run.artifacts["response.json"] = (
                 redact(
                     json.dumps(
                         {"sanitized": sanitize_response(response),
                          "note": "strings over 200 chars are replaced with a placeholder; "
-                                 "this is the full upstream response otherwise"},
+                                 "this is the final upstream response otherwise"},
                         ensure_ascii=False, indent=2,
                     ),
                     api_key,
                 ).encode("utf-8"),
                 "application/json",
             )
-            raw = pr.extract_image(response)
-            run.emit("extracted", "已取得图片", {"bytes": len(raw)})
 
         where = "pixelize"
         run.emit("pixelizing", "像素化中", {"size": size, "palette": palette_spec})
-        image = pr.pixelize(raw, config)
+        image = pr.pixelize(raw, config, preserve_clusters=not pixelize_only)
 
         where = "verify"
         run.emit("verifying", "校验调色板中", {})
@@ -669,7 +718,8 @@ def work(run: Run, upload: bytes, mime_type: str, filename: str, size: int,
 
         where = "save_outputs"
         run.emit("saving", "写盘中", {})
-        pr.save_outputs(input_path, raw, image, config, run.dir)
+        pr.save_outputs(input_path, raw, image, config, run.dir,
+                        refinement_applied=refinement_applied)
         run.has_raw = True
 
         run.artifacts["pixel.png"] = (_png_bytes(image), "image/png")
@@ -683,7 +733,8 @@ def work(run: Run, upload: bytes, mime_type: str, filename: str, size: int,
         # Built from build_payload() a second time (~2ms) purely for debugging:
         # it answers "what did we actually ask for".
         where = "build_payload"
-        payload = pr.build_payload(input_path, config)
+        payload = pr.build_payload(input_path, config,
+                                   draft=draft if refinement_applied else None)
         for part in payload.get("contents", [{}])[0].get("parts", []):
             inline = part.get("inline_data")
             if inline:
@@ -697,14 +748,21 @@ def work(run: Run, upload: bytes, mime_type: str, filename: str, size: int,
             "run_id": run.id,
             "mode": run.mode,
             "size": [image.width, image.height],
+            "base_size": list(config.base_size or config.size),
+            "reference_canvas": pr.REFERENCE_CANVAS,
+            "source_size": list(config.source_size) if config.source_size else None,
             "scale": config.scale,
             "palette_requested": palette_spec,
             "palette_used": palette_report(image),
             "subset_ok": True,
             "color_count": len(palette_report(image)),
+            "refinement_applied": refinement_applied,
             "has_raw": True,
+            "draft_size": run.draft_size,
+            "draft_scale": run.draft_scale,
             "elapsed_s": round((time.monotonic() - run.started_monotonic), 3),
             "urls": {
+                "draft": f"/api/runs/{run.id}/draft.png" if "draft.png" in run.artifacts else None,
                 "pixel": f"/api/runs/{run.id}/pixel.png",
                 "preview": f"/api/runs/{run.id}/preview.png",
                 "raw": f"/api/runs/{run.id}/raw.png",
@@ -855,9 +913,23 @@ def repixelize(run: Run, size: int, palette_spec: Any, max_colors: int) -> dict[
     source = run.dir / f"{run.id}.ai.png"
     if not source.is_file():
         raise pr.PixelError(f"Run {run.id} has no cached model output to re-pixelize")
+    source_size = run.config.source_size if run.config else None
+    if source_size is None:
+        for candidate in run.dir.glob(f"{run.id}.*"):
+            if candidate.name.endswith(".ai.png") or candidate.suffix in (".json",):
+                continue
+            try:
+                with Image.open(candidate) as probe:
+                    source_size = probe.size
+                break
+            except (OSError, Image.UnidentifiedImageError):
+                continue
+    if source_size is None:
+        raise pr.PixelError(f"Run {run.id} has no source dimensions for proportional rendering")
     config = build_web_config(size, palette_spec, max_colors, pixelize_only=False)
+    config = pr.configure_for_source(config, source_size)
     started = time.monotonic()
-    image = pr.pixelize(source.read_bytes(), config)
+    image = pr.pixelize(source.read_bytes(), config, preserve_clusters=run.mode == "model")
     assert_palette_subset(image, config.palette)
     run.config = config
     run.artifacts["pixel.png"] = (_png_bytes(image), "image/png")
@@ -871,14 +943,21 @@ def repixelize(run: Run, size: int, palette_spec: Any, max_colors: int) -> dict[
         "run_id": run.id,
         "mode": run.mode,
         "size": [image.width, image.height],
+        "base_size": list(config.base_size or config.size),
+        "reference_canvas": pr.REFERENCE_CANVAS,
+        "source_size": list(config.source_size) if config.source_size else None,
         "scale": config.scale,
         "palette_requested": palette_spec,
         "palette_used": used,
         "subset_ok": True,
         "color_count": len(used),
+        "refinement_applied": bool(run.result and run.result.get("refinement_applied")),
         "has_raw": run.has_raw,
+        "draft_size": run.draft_size,
+        "draft_scale": run.draft_scale,
         "elapsed_s": round(time.monotonic() - started, 3),
         "urls": {
+            "draft": f"/api/runs/{run.id}/draft.png" if "draft.png" in run.artifacts else None,
             "pixel": f"/api/runs/{run.id}/pixel.png",
             "preview": f"/api/runs/{run.id}/preview.png",
             "raw": f"/api/runs/{run.id}/raw.png",
@@ -1065,9 +1144,9 @@ class Handler(BaseHTTPRequestHandler):
         actually has.
         """
         upstream = pr.upstream_env()
-        default_size = 64
+        default_size = 32
         try:
-            configured = pr.parse_size(os.getenv("PIXEL_SIZE", "64x64"))
+            configured = pr.parse_size(os.getenv("PIXEL_SIZE", "32x32"))
             if configured[0] == configured[1] and configured[0] in SIZES:
                 default_size = configured[0]
         except ValueError:
@@ -1075,6 +1154,8 @@ class Handler(BaseHTTPRequestHandler):
         host = pr.safe_host(upstream["base_url"])
         return {
             "sizes": list(SIZES),
+            "reference_canvas": pr.REFERENCE_CANVAS,
+            "color_choices": list(COLOR_CHOICES),
             "default_size": default_size,
             "preview_scales": {str(n): preview_scale_for(n) for n in SIZES},
             "presets": pixel_palettes.as_meta(),
@@ -1123,7 +1204,7 @@ class Handler(BaseHTTPRequestHandler):
         try:
             size = int(size)
         except (TypeError, ValueError):
-            raise pr.SizeError(f"Unsupported size {size!r}; choose 8, 16, 32 or 64.") from None
+            raise pr.SizeError(f"Unsupported density {size!r}; choose 8, 16, 32, 64 or 128.") from None
 
         max_colors = body.get("max_colors", 16)
         try:
@@ -1171,7 +1252,12 @@ class Handler(BaseHTTPRequestHandler):
                 "note": "the in-flight upstream request cannot be interrupted and may still be billed",
             })
         body = self.read_json_body()
-        size = int(body.get("size", run.config.size[0] if run.config else 64))
+        default_size = (
+            run.config.base_size[0]
+            if run.config and run.config.base_size
+            else 64
+        )
+        size = int(body.get("size", default_size))
         max_colors = int(body.get("max_colors", 16))
         try:
             result = repixelize(run, size, body.get("palette"), max_colors)
@@ -1198,6 +1284,8 @@ class Handler(BaseHTTPRequestHandler):
             name = f"{run_id}_x{run.config.scale}.png"
         elif what == "raw.png":
             name = f"{run_id}_ai.png"
+        elif what == "draft.png":
+            name = f"{run_id}_draft.png"
         self.send_bytes(200, payload, content_type, name)
 
     # -- SSE ---------------------------------------------------------------
