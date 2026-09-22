@@ -1,0 +1,19 @@
+{
+  "name": "pixel-redraw-tools",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Local Pyodide runtime for smoke-testing the pixel-redraw core under wasm",
+  "type": "module",
+  "scripts": {
+    "dist": "node fetch-dist.mjs",
+    "serve": "node serve.mjs",
+    "linkcheck": "node linkcheck.mjs",
+    "smoke": "node smoke.mjs",
+    "browser": "node browser-smoke.mjs",
+    "test": "node linkcheck.mjs && node smoke.mjs"
+  },
+  "license": "ISC",
+  "dependencies": {
+    "pyodide": "314.0.7"
+  }
+}

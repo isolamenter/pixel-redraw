@@ -281,7 +281,12 @@ def self_check() -> None:
 
 
 def as_meta() -> list[dict]:
-    """The preset registry in the shape ``GET /api/meta`` publishes."""
+    """The preset registry, in the shape the frontend renders it from.
+
+    ``pixel_pipeline.web_meta()`` carries this to the page at boot, so the
+    palette list the user picks from is the same data the renderer resolves
+    against -- there is no second copy to drift.
+    """
     meta = [
         {
             "id": preset_id,

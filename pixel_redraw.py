@@ -1,31 +1,32 @@
 #!/usr/bin/env python3
-"""Minimal Gemini image-to-pixel-art converter.
+"""pixel-redraw core: the Gemini generateContent protocol and the local
+Pillow pass that turns a model's output into true pixel art.
 
-The upstream call is intentionally kept small and configurable.  It speaks the
-Gemini native generateContent protocol, so the model is asked for image output
-and the local Pillow pass enforces the final pixel-art constraints.
+This module is pure compute.  It reads no environment variables, opens no
+files, and owns no socket, because it runs unchanged in two places: on CPython
+for the unit tests, and inside Pyodide (WASM CPython) in the browser, where
+there is no environment to read and no synchronous networking at all.
 
-Authentication is the x-goog-api-key header against GEMINI_BASE_URL, which
-defaults to the official endpoint.  An AI Studio key therefore needs no endpoint
-configured at all, and any gateway speaking the same protocol works by pointing
-GEMINI_BASE_URL at it.
+The transport is therefore injected: `generate()` takes an async
+``call_upstream(payload) -> response`` callback and never knows whether the
+bytes travelled over urllib, pyfetch, or a test double.  `pixel_pipeline.py`
+supplies the browser transport.
+
+Authentication is the x-goog-api-key header sent to ``Config.base_url``, which
+defaults to the official endpoint, so an AI Studio key needs no endpoint
+configured at all and any gateway speaking the same protocol works by pointing
+``base_url`` at it.
 """
 
 from __future__ import annotations
 
-import argparse
 import base64
 import io
 import json
-import mimetypes
-import os
 import re
-import sys
-import urllib.error
-import urllib.request
+import struct
 from dataclasses import dataclass, replace
-from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Awaitable, Callable, Iterable
 
 
 DEFAULT_PROMPT = """Redraw the provided image as clean, deliberate pixel art.
@@ -66,6 +67,10 @@ DEFAULT_API_VERSION = "v1beta"
 # carrying /v1beta would build /v1beta/v1beta/...
 DEFAULT_BASE_URL = "https://generativelanguage.googleapis.com"
 
+# A wall-clock budget, not a per-socket timeout: the browser transport wraps the
+# whole request in asyncio.wait_for, so reaching this really does stop waiting.
+DEFAULT_TIMEOUT = 180.0
+
 # Formats Gemini accepts for inline image data. Anything else (GIF, BMP, TIFF,
 # ...) has to be re-encoded before it can be sent.
 GEMINI_IMAGE_MIME_TYPES = {
@@ -76,19 +81,64 @@ GEMINI_IMAGE_MIME_TYPES = {
     "image/heif",
 }
 
+# Extension -> MIME, for the browser path where the caller holds bytes and a
+# name but has no mimetypes module available.
+_MIME_BY_EXTENSION = {
+    "png": "image/png",
+    "jpg": "image/jpeg",
+    "jpeg": "image/jpeg",
+    "webp": "image/webp",
+    "heic": "image/heic",
+    "heif": "image/heif",
+}
+
+
+# --------------------------------------------------------------------------
+# limits and choices
+# --------------------------------------------------------------------------
+#
+# These moved here from the deleted web layer.  They used to protect a server's
+# memory; they now protect the browser's WASM heap, and the values are
+# unchanged, so the same picture is accepted or refused as before.
+
+DEFAULT_SIZE = "32x32"
+DEFAULT_SCALE = 8
+DEFAULT_MAX_COLORS = 16
+
+SIZES = (8, 16, 32, 64, 128)
+COLOR_CHOICES = (8, 12, 16, 24, 32, 48, 64)
+MAX_UPLOAD_BYTES = 12 * 1024 * 1024
+MAX_IMAGE_PIXELS = 16_000_000
+MAX_DIMENSION = 4096
+
+# Our own guard must fire before Pillow's, so the user gets a message naming the
+# real numbers instead of a DecompressionBombError.  Pillow only *warns* at its
+# default 89,478,485 and does not raise until 2x that, by which point a
+# 144-megapixel image has already allocated ~585MB.
+PILLOW_PIXEL_CEILING = MAX_IMAGE_PIXELS * 2
+
+# Stages, in order, per run mode.  A real statement boundary sits between each
+# pair; nothing is emitted on a timer.
+STAGES_MODEL = (
+    "received", "encoding", "upstream_wait", "upstream_response",
+    "extract_start", "extracted", "refine_wait", "refine_response", "refined",
+    "pixelizing", "verifying", "saving", "done",
+)
+STAGES_LOCAL = ("received", "encoding", "pixelizing", "verifying", "saving", "done")
+
+
+# --------------------------------------------------------------------------
+# errors
+# --------------------------------------------------------------------------
+#
+# ``kind`` is the error contract the frontend keys off.  It classifies a
+# failure structurally, never by matching message wording: several of these
+# raise sites have ``__cause__ is None``, so a classifier that inspected the
+# cause could not tell a relay quota error apart from an internal bug.
+
 
 class PixelError(RuntimeError):
-    """Base class for every failure this module raises deliberately.
-
-    Subclasses RuntimeError so that main()'s existing
-    ``except (OSError, ValueError, RuntimeError)`` still catches every one of
-    them and the CLI's exit code and message text are unchanged.  ``kind``
-    exists so a frontend can classify a failure structurally instead of by
-    matching message wording: pixel_web.py maps it to the error envelope, and
-    several of these raise sites have ``__cause__ is None``, so a classifier
-    that inspected the cause could not tell a relay quota error apart from an
-    internal bug.
-    """
+    """Base class for every failure this module raises deliberately."""
 
     kind = "internal"
 
@@ -105,6 +155,18 @@ class SizeError(PixelError, ValueError):
     kind = "size"
 
 
+class LimitsError(PixelError):
+    kind = "limits"
+
+
+class PaletteViolationError(PixelError):
+    kind = "palette_violation"
+
+
+class InputImageError(PixelError):
+    kind = "input_image"
+
+
 class UpstreamHTTPError(PixelError):
     kind = "upstream_http"
 
@@ -116,6 +178,10 @@ class UpstreamHTTPError(PixelError):
 
 class UpstreamTransportError(PixelError):
     kind = "upstream_transport"
+
+
+class UpstreamTimeoutError(PixelError):
+    kind = "upstream_timeout"
 
 
 class UpstreamNonJSONError(PixelError):
@@ -165,126 +231,128 @@ class Config:
     passes: int = 2
 
 
-def load_dotenv(path: Path = Path(".env")) -> None:
-    """Load simple KEY=value entries without overwriting shell variables."""
-    if not path.exists():
-        return
-
-    for raw_line in path.read_text(encoding="utf-8").splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("#"):
-            continue
-        if line.startswith("export "):
-            line = line[7:].lstrip()
-        key, separator, value = line.partition("=")
-        if not separator or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key.strip()):
-            continue
-        key = key.strip()
-        value = value.strip()
-        if len(value) >= 2 and value[0] == value[-1] and value[0] in "'\"":
-            value = value[1:-1]
-        elif " #" in value:
-            value = value.split(" #", 1)[0].rstrip()
-        reference = re.fullmatch(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}", value)
-        if reference:
-            value = os.getenv(reference.group(1), "")
-        os.environ.setdefault(key, value)
-
-
-def env_bool(name: str, default: bool) -> bool:
-    value = os.getenv(name)
-    if value is None:
-        return default
-    return value.strip().lower() in {"1", "true", "yes", "on"}
-
-
 # --------------------------------------------------------------------------
-# upstream configuration
+# configuration (explicit values, no environment)
 # --------------------------------------------------------------------------
-#
-# Each setting is named GEMINI_*, and two of them have a second name that Google's
-# own SDKs read for themselves:
-#
-#   GEMINI_*  the canonical name, and all the official endpoint needs
-#   GOOGLE_*  borrowed aliases, accepted for the two settings where such a name
-#             exists (GOOGLE_API_KEY, GOOGLE_GEMINI_BASE_URL)
-#
-# A name is skipped when it is absent OR empty, so `GEMINI_API_KEY=` cannot fall
-# through to the alias.  GEMINI_RESPONSE_MODALITIES is the one exception, and
-# resolves by presence instead -- see response_modalities().
-#
-# The borrowed GOOGLE_* aliases are consulted only when the project's own name is
-# absent from the environment ENTIRELY.  Without that rule an ambient
-# GOOGLE_API_KEY, exported for some other Google tool, would silently outrank a
-# correctly configured .env.
 
 
-def resolve_env(name: str, borrowed: tuple[str, ...] = (), default: str = "") -> str:
-    """First non-empty value in this setting's chain, else `default`.
+def make_config(
+    *,
+    model: str,
+    api_key: str = "",
+    base_url: str = DEFAULT_BASE_URL,
+    api_version: str = DEFAULT_API_VERSION,
+    timeout: float = DEFAULT_TIMEOUT,
+    size: str = DEFAULT_SIZE,
+    scale: int = DEFAULT_SCALE,
+    max_colors: int = DEFAULT_MAX_COLORS,
+    palette: str | tuple[tuple[int, int, int], ...] | None = None,
+    prompt: str = "",
+    refine_prompt: str = "",
+    keep_raw: bool = True,
+    response_modalities: tuple[str, ...] | None = None,
+    image_size: str = "",
+    passes: int = 2,
+) -> Config:
+    """Build a Config from explicit values.
 
-    The borrowed aliases are consulted only when `name` is absent from the
-    environment entirely -- not merely empty.  The difference is load-bearing:
-    `GEMINI_API_KEY=` is a deliberate "no key here", and a resolver that read the
-    alias then would spend whatever ambient credential happened to be exported.
+    Every input the old build_config() read from the environment is now a
+    keyword here, which is what lets one browser hold several users' settings
+    without them colliding.
+
+    Bounds are checked here rather than by the caller.  The deleted web layer
+    had to replicate main()'s scale/max_colors checks because build_config
+    accepted whatever the environment said; folding them in means there is now
+    exactly one authority and no caller can forget.
+
+    ``palette`` is either an explicit sequence of RGB triples, a hex string
+    ("#RRGGBB,#RRGGBB"), or a falsy value for automatic quantisation.  Preset
+    resolution lives in pixel_palettes, which imports this module, so taking a
+    palette *spec* here would be a circular dependency.
     """
-    value = os.getenv(name)
-    if value is not None and value.strip():
-        return value.strip()
-    if borrowed and name not in os.environ:
-        for candidate in borrowed:
-            value = os.getenv(candidate)
-            if value is not None and value.strip():
-                return value.strip()
-    return default
+    if isinstance(palette, str):
+        colors = parse_palette(palette)
+    elif palette:
+        colors = tuple(tuple(int(channel) for channel in color) for color in palette)
+        if not colors:
+            raise PaletteError("Palette must contain at least one color")
+        if len(colors) > 256:
+            raise PaletteError(f"Palette may hold at most 256 colors, got {len(colors)}")
+    else:
+        colors = None
+
+    parsed_size = parse_size(size)
+
+    try:
+        timeout_value = float(timeout)
+    except (TypeError, ValueError) as exc:
+        raise ConfigError(f"Timeout must be a number, got {timeout!r}") from exc
+    if timeout_value <= 0:
+        raise ConfigError("Timeout must be positive")
+
+    if not isinstance(passes, int) or isinstance(passes, bool) or passes not in (1, 2):
+        raise ConfigError("passes must be 1 or 2")
+    if not 1 <= int(scale) <= 32:
+        raise ConfigError(f"Preview scale must be between 1 and 32, got {scale}")
+    if not 2 <= int(max_colors) <= 256:
+        raise SizeError(f"Max colors must be between 2 and 256, got {max_colors}")
+
+    prompt_template = prompt or DEFAULT_PROMPT
+    refine_prompt_template = refine_prompt or REFINE_PROMPT
+    modalities = ("TEXT", "IMAGE") if response_modalities is None else tuple(response_modalities)
+
+    return Config(
+        base_url=(base_url or DEFAULT_BASE_URL).strip(),
+        api_key=api_key.strip(),
+        model=model.strip(),
+        api_version=(api_version or DEFAULT_API_VERSION).strip(),
+        timeout=timeout_value,
+        size=parsed_size,
+        scale=int(scale),
+        max_colors=int(max_colors),
+        palette=colors,
+        prompt=_fill_prompt(prompt_template, parsed_size),
+        keep_raw=bool(keep_raw),
+        response_modalities=modalities,
+        image_size=(image_size or "").strip(),
+        base_size=parsed_size,
+        prompt_template=prompt_template,
+        refine_prompt_template=refine_prompt_template,
+        passes=passes,
+    )
 
 
-def response_modalities() -> tuple[str, ...]:
-    """The responseModalities to ask for, resolved by PRESENCE rather than value.
+def validate_upstream(config: Config) -> None:
+    """Whether a model call can be attempted at all.
 
-    Unset means "ask for an image", which is why this tool exists.  Set-but-empty
-    means "send no responseModalities at all", for endpoints that reject the
-    field.  Those are genuinely different behaviours, so presence decides: the
-    variable wins even when blank.
+    Kept separate from make_config() so the local-pixelize-only path needs no
+    credentials -- that path is how the pipeline is smoke-tested without
+    spending an API call, so it must not demand a key.
     """
-    if "GEMINI_RESPONSE_MODALITIES" in os.environ:
-        return tuple(
-            item.strip().upper() for item in os.environ["GEMINI_RESPONSE_MODALITIES"].split(",")
-            if item.strip()
-        )
-    return ("TEXT", "IMAGE")
+    missing = [
+        name
+        for name, value in (("model", config.model), ("api key", config.api_key))
+        if not value
+    ]
+    if missing:
+        raise ConfigError("Missing " + " and ".join(missing) + ". Fill both in on the page.")
 
 
-def upstream_env() -> dict[str, str]:
-    """Every upstream setting, resolved once.
-
-    Single authority for the CLI, the web server's /api/meta and its startup
-    banner -- resolving independently in three places is how they drift apart.
-    """
-    return {
-        "api_key": resolve_env("GEMINI_API_KEY", ("GOOGLE_API_KEY",)),
-        "base_url": resolve_env("GEMINI_BASE_URL", ("GOOGLE_GEMINI_BASE_URL",),
-                                DEFAULT_BASE_URL),
-        "model": resolve_env("GEMINI_MODEL"),
-        "api_version": resolve_env("GEMINI_API_VERSION", default=DEFAULT_API_VERSION),
-        "timeout": resolve_env("GEMINI_TIMEOUT", default="180"),
-        "image_size": resolve_env("GEMINI_IMAGE_SIZE"),
-    }
+def _fill_prompt(template: str, size: tuple[int, int]) -> str:
+    return template.replace("{width}", str(size[0])).replace("{height}", str(size[1]))
 
 
-def upstream_configured(env: dict[str, str] | None = None) -> bool:
-    """Whether a model call can be attempted at all. The base URL always has a
-    value now (the official endpoint), so only the credential and the model can
-    be missing."""
-    env = env or upstream_env()
-    return bool(env["api_key"] and env["model"])
-
-
-def parse_size(value: str) -> tuple[int, int]:
-    match = re.fullmatch(r"\s*(\d+)(?:[xX](\d+))?\s*", value)
-    if not match:
-        raise SizeError(f"Invalid size {value!r}; use N or WIDTHxHEIGHT, e.g. 64x64")
-    width = int(match.group(1))
-    height = int(match.group(2) or match.group(1))
+def parse_size(value: Any) -> tuple[int, int]:
+    if isinstance(value, (tuple, list)):
+        if len(value) != 2:
+            raise SizeError(f"Invalid size {value!r}; use N or WIDTHxHEIGHT, e.g. 64x64")
+        width, height = int(value[0]), int(value[1])
+    else:
+        match = re.fullmatch(r"\s*(\d+)(?:[xX](\d+))?\s*", str(value))
+        if not match:
+            raise SizeError(f"Invalid size {value!r}; use N or WIDTHxHEIGHT, e.g. 64x64")
+        width = int(match.group(1))
+        height = int(match.group(2) or match.group(1))
     if not (1 <= width <= 1024 and 1 <= height <= 1024):
         raise SizeError("Pixel canvas dimensions must be between 1 and 1024")
     return width, height
@@ -315,13 +383,9 @@ def configure_for_source(config: Config, source_size: tuple[int, int]) -> Config
     base_size = config.base_size or config.size
     output_size = proportional_size(source_size, base_size)
     template = config.prompt_template or config.prompt
-    prompt = template.replace("{width}", str(output_size[0])).replace(
-        "{height}", str(output_size[1])
-    )
+    prompt = _fill_prompt(template, output_size)
     refine_template = config.refine_prompt_template or config.refine_prompt or REFINE_PROMPT
-    refine_prompt = refine_template.replace("{width}", str(output_size[0])).replace(
-        "{height}", str(output_size[1])
-    )
+    refine_prompt = _fill_prompt(refine_template, output_size)
     return replace(
         config,
         size=output_size,
@@ -355,76 +419,17 @@ def parse_palette(value: str) -> tuple[tuple[int, int, int], ...] | None:
     return tuple(colors)
 
 
-def build_config(args: argparse.Namespace) -> Config:
-    size = parse_size(args.size or os.getenv("PIXEL_SIZE", "32x32"))
-    palette = parse_palette(args.palette or os.getenv("PIXEL_PALETTE", "auto"))
-    prompt_template = args.prompt or os.getenv("PIXEL_PROMPT", DEFAULT_PROMPT)
-    refine_prompt_template = os.getenv("PIXEL_REFINE_PROMPT", REFINE_PROMPT)
-    prompt = prompt_template.replace("{width}", str(size[0])).replace(
-        "{height}", str(size[1])
-    )
-
-    env = upstream_env()
-    base_url = env["base_url"]
-    api_key = env["api_key"]
-    model = env["model"]
-    api_version = env["api_version"]
-    modalities = response_modalities()
-    passes = getattr(args, "passes", None)
-    try:
-        passes = int(passes if passes is not None else os.getenv("PIXEL_GENERATION_PASSES", "2"))
-    except (TypeError, ValueError) as exc:
-        raise ConfigError("PIXEL_GENERATION_PASSES must be 1 or 2") from exc
-    if passes not in (1, 2):
-        raise ConfigError("PIXEL_GENERATION_PASSES must be 1 or 2")
-
-    if not args.pixelize_only:
-        # Only these two can be missing: the base URL falls back to the official
-        # endpoint, so a Google key plus a model is a complete configuration.
-        missing = [
-            name
-            for name, value in (
-                ("GEMINI_API_KEY", api_key),
-                ("GEMINI_MODEL", model),
-            )
-            if not value
-        ]
-        if missing:
-            raise ConfigError(
-                "Missing .env values: " + ", ".join(missing) + ". "
-                "Copy .env.example to .env and fill them in."
-            )
-
-    return Config(
-        base_url=base_url,
-        api_key=api_key,
-        model=model,
-        api_version=api_version,
-        timeout=float(env["timeout"]),
-        size=size,
-        scale=args.scale if args.scale is not None else int(os.getenv("PIXEL_SCALE", "8")),
-        max_colors=(
-            args.max_colors
-            if args.max_colors is not None
-            else int(os.getenv("PIXEL_MAX_COLORS", "16"))
-        ),
-        palette=palette,
-        prompt=prompt,
-        keep_raw=args.keep_raw or env_bool("PIXEL_KEEP_RAW", True),
-        response_modalities=modalities,
-        image_size=env["image_size"],
-        base_size=size,
-        prompt_template=prompt_template,
-        refine_prompt_template=refine_prompt_template,
-        passes=passes,
-    )
+# --------------------------------------------------------------------------
+# Pillow and the request URL
+# --------------------------------------------------------------------------
 
 
 def require_pillow() -> tuple[Any, Any, Any]:
     try:
         from PIL import Image, ImageOps
-    except ImportError as exc:
+    except ImportError as exc:  # pragma: no cover - the tests import Pillow
         raise RuntimeError("Pillow is required. Run: python3 -m pip install -r requirements.txt") from exc
+    Image.MAX_IMAGE_PIXELS = PILLOW_PIXEL_CEILING
     return Image, ImageOps, None
 
 
@@ -443,7 +448,13 @@ def safe_host(url: str) -> str:
     return without_scheme.split("@")[-1].split("/")[0].split("?")[0]
 
 
-def prepare_image(path: Path) -> tuple[str, str]:
+def guess_image_mime(filename: str, fallback: str = "") -> str:
+    """Container MIME from a filename, without importing mimetypes."""
+    extension = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+    return _MIME_BY_EXTENSION.get(extension, fallback)
+
+
+def prepare_image(data: bytes, mime_hint: str = "", filename: str = "") -> tuple[str, str]:
     """Return (mime_type, base64) ready to send as Gemini inline_data.
 
     Passes supported formats through untouched so PNG/JPEG are not needlessly
@@ -451,17 +462,20 @@ def prepare_image(path: Path) -> tuple[str, str]:
     cannot be inferred, or an animated image whose later frames would otherwise
     be silently dropped -- is flattened to a single PNG frame.
     """
-    mime_type = (mimetypes.guess_type(path.name)[0] or "").lower()
+    mime_type = (mime_hint or guess_image_mime(filename) or "").lower()
     if mime_type in GEMINI_IMAGE_MIME_TYPES:
         Image, _, _ = require_pillow()
-        with Image.open(path) as probe:
+        with Image.open(io.BytesIO(data)) as probe:
             animated = getattr(probe, "is_animated", False)
         if not animated:
-            return mime_type, base64.b64encode(path.read_bytes()).decode("ascii")
+            return mime_type, base64.b64encode(data).decode("ascii")
 
     Image, ImageOps, _ = require_pillow()
-    with Image.open(path) as source:
-        frame = ImageOps.exif_transpose(source).convert("RGBA")
+    try:
+        with Image.open(io.BytesIO(data)) as source:
+            frame = ImageOps.exif_transpose(source).convert("RGBA")
+    except Exception as exc:
+        raise InputImageError(f"Not a decodable image: {exc}") from exc
     buffer = io.BytesIO()
     frame.save(buffer, "PNG")
     return "image/png", base64.b64encode(buffer.getvalue()).decode("ascii")
@@ -492,7 +506,7 @@ def _pixelize_frame(source: Any, config: Config, size: tuple[int, int],
     return rgb
 
 
-def build_reference_image(path: Path, config: Config) -> tuple[str, str]:
+def build_reference_image(source_bytes: bytes, config: Config) -> tuple[str, str]:
     """Build the low-resolution pixel-grid guide sent alongside the source.
 
     The original image remains the primary input. The guide is only a second,
@@ -500,7 +514,7 @@ def build_reference_image(path: Path, config: Config) -> tuple[str, str]:
     shapes and colour clusters must survive the requested density.
     """
     Image, ImageOps, _ = require_pillow()
-    with Image.open(path) as source:
+    with Image.open(io.BytesIO(source_bytes)) as source:
         frame = ImageOps.exif_transpose(source).convert("RGBA")
     logical = _pixelize_frame(frame, config, config.size)
     guide = logical.resize(frame.size, Image.Resampling.NEAREST)
@@ -509,14 +523,21 @@ def build_reference_image(path: Path, config: Config) -> tuple[str, str]:
     return "image/png", base64.b64encode(buffer.getvalue()).decode("ascii")
 
 
-def build_payload(input_path: Path, config: Config, draft: bytes | None = None) -> dict[str, Any]:
+def build_payload(source_bytes: bytes, config: Config, draft: bytes | None = None,
+                  draft_image: Any = None) -> dict[str, Any]:
+    """Build the generateContent body for either pass.
+
+    ``draft_image`` lets the caller hand in an already-pixelized draft instead of
+    paying for the mapping again; it is purely an optimisation and the result is
+    identical either way.
+    """
     Image, _, _ = require_pillow()
-    with Image.open(input_path) as probe:
+    with Image.open(io.BytesIO(source_bytes)) as probe:
         if config.source_size != probe.size:
             config = configure_for_source(config, probe.size)
-    mime_type, content = prepare_image(input_path)
+    mime_type, content = prepare_image(source_bytes)
     if draft is None:
-        guide_mime, guide_content = build_reference_image(input_path, config)
+        guide_mime, guide_content = build_reference_image(source_bytes, config)
         parts = [
             {"text": config.prompt},
             {"text": "The first image is the original source. Preserve its subject and composition."},
@@ -525,7 +546,10 @@ def build_payload(input_path: Path, config: Config, draft: bytes | None = None) 
             {"inline_data": {"mime_type": guide_mime, "data": guide_content}},
         ]
     else:
-        review = build_refine_reference(draft, config)
+        review = _expand_to_review(
+            draft_image if draft_image is not None else pixelized_draft(draft, config),
+            config,
+        )
         parts = [
             {"text": config.refine_prompt or REFINE_PROMPT},
             {"text": "The first image is the locally pixelized draft to repaint."},
@@ -556,49 +580,6 @@ def build_payload(input_path: Path, config: Config, draft: bytes | None = None) 
     }
 
 
-def call_gemini(input_path: Path, config: Config, draft: bytes | None = None) -> dict[str, Any]:
-    url = api_url(config.base_url, config.api_version, config.model)
-    headers = {
-        "x-goog-api-key": config.api_key,
-        "Accept": "application/json",
-        "Content-Type": "application/json",
-        "User-Agent": "pixel-redraw-mvp/0.1",
-    }
-    body = json.dumps(build_payload(input_path, config, draft=draft)).encode("utf-8")
-
-    request = urllib.request.Request(url, data=body, headers=headers, method="POST")
-    try:
-        with urllib.request.urlopen(request, timeout=config.timeout) as response:
-            raw = response.read()
-            status = response.status
-    except urllib.error.HTTPError as exc:
-        # The message keeps the 1200-byte slice the CLI has always printed; the
-        # full body rides on .detail for callers that can show more than a line.
-        body = exc.read().decode("utf-8", errors="replace")
-        raise UpstreamHTTPError(
-            f"Upstream HTTP {exc.code}: {body[:1200]}", status=exc.code, detail=body
-        ) from exc
-    except urllib.error.URLError as exc:
-        raise UpstreamTransportError(f"Upstream connection failed: {exc.reason}") from exc
-
-    try:
-        parsed = json.loads(raw.decode("utf-8"))
-    except json.JSONDecodeError as exc:
-        # An HTML error page from a reverse proxy is the most common endpoint
-        # failure, and "HTTP 200" alone gives the reader nothing to act on.
-        raise UpstreamNonJSONError(
-            f"Upstream returned non-JSON response (HTTP {status}): "
-            + raw[:500].decode("utf-8", errors="replace"),
-            status=status,
-            detail=raw[:4000].decode("utf-8", errors="replace"),
-        ) from exc
-    if not isinstance(parsed, dict):
-        raise UpstreamProtocolError("Upstream response must be a JSON object")
-    if parsed.get("error"):
-        raise UpstreamErrorField(f"Upstream returned an error: {compact_json(parsed['error'])}")
-    return parsed
-
-
 def compact_json(value: Any, limit: int = 1000) -> str:
     safe = value_for_hint(value)
     text = json.dumps(safe, ensure_ascii=False, separators=(",", ":"))
@@ -626,6 +607,11 @@ def candidate_images(value: Any) -> Iterable[bytes]:
     Gemini returns generated images as base64 inside parts, using camelCase
     (``inlineData``/``mimeType``) upstream and snake_case (``inline_data``/
     ``mime_type``) in some tools and relays, so both spellings are accepted.
+
+    A data URI embedded in prose is also accepted.  A bare URL is NOT fetched:
+    the old CLI downloaded it, but a browser cannot make that cross-origin
+    request without the other host's CORS consent, so extract_image() reports
+    the URL as the reason instead of silently producing nothing.
     """
     if isinstance(value, dict):
         for key, item in value.items():
@@ -640,13 +626,8 @@ def candidate_images(value: Any) -> Iterable[bytes]:
         for item in value:
             yield from candidate_images(item)
     elif isinstance(value, str):
-        # Some relays inline the image as a data URI or a plain URL instead.
         for match in DATA_URI_RE.finditer(value):
             content = decode_base64_image(match.group(1))
-            if content:
-                yield content
-        for match in URL_RE.finditer(value):
-            content = download_image(match.group(0).rstrip(".,"))
             if content:
                 yield content
 
@@ -678,15 +659,6 @@ def decode_base64_image(value: str) -> bytes | None:
         return None
 
 
-def download_image(url: str) -> bytes | None:
-    try:
-        request = urllib.request.Request(url, headers={"User-Agent": "pixel-redraw-mvp/0.1"})
-        with urllib.request.urlopen(request, timeout=60) as response:
-            return valid_image_bytes(response.read())
-    except (urllib.error.URLError, ValueError):
-        return None
-
-
 def valid_image_bytes(content: bytes) -> bytes | None:
     try:
         Image, _, _ = require_pillow()
@@ -710,17 +682,43 @@ def extract_image(response: dict[str, Any]) -> bytes:
         (response.get("promptFeedback") or {}).get("blockReason")
         or ((response.get("candidates") or [{}])[0].get("finishReason"))
     )
+    urls = URL_RE.findall(compact_json(response, limit=20000))
+    if urls:
+        raise NoImageExtracted(
+            "The endpoint returned an image URL instead of inline image data. "
+            "A browser cannot fetch that cross-origin unless the host sends CORS "
+            f"headers, so this tool does not follow it. URL seen: {urls[0]}"
+        )
     raise NoImageExtracted(
         "The upstream call succeeded but no image could be extracted. "
-        "Check that GEMINI_MODEL supports image output and that "
-        "GEMINI_RESPONSE_MODALITIES includes IMAGE"
+        "Check that the model supports image output and that responseModalities "
+        "includes IMAGE"
         + (f" (upstream reason: {blocked})" if blocked else "")
         + f". Response hint: {compact_json(response)}"
     )
 
 
 def nearest_palette(image: Any, palette: tuple[tuple[int, int, int], ...]) -> Any:
-    """Map each RGB pixel to its nearest explicit palette color."""
+    """Map each RGB pixel to its nearest explicit palette color.
+
+    Ties resolve to the LOWEST palette index, and that is load-bearing: the
+    documented preset order is part of the result, so the lists must not be
+    reordered to influence output.  Both implementations below honour it --
+    the pure-Python min() keeps the first minimum, and numpy's strict ``<``
+    update never lets a later index displace an equal-distance earlier one.
+
+    The numpy path exists because the fallback is genuinely too slow to ship:
+    the loop costs ~33us per pixel at 64 colors, so a 2000x2000 output (the
+    largest the density ladder can reach on a 4096px source) is over two
+    minutes of a frozen browser tab.  numpy is loaded lazily in the browser and
+    is absent from requirements.txt, so the fallback stays the reference
+    implementation and the two are asserted equal in the tests.
+    """
+    try:
+        return _nearest_palette_numpy(image, palette)
+    except ImportError:
+        pass
+
     Image, _, _ = require_pillow()
     output = Image.new("RGB", image.size)
     source = image.load()
@@ -739,12 +737,72 @@ def nearest_palette(image: Any, palette: tuple[tuple[int, int, int], ...]) -> An
     return output
 
 
+def _nearest_palette_numpy(image: Any, palette: tuple[tuple[int, int, int], ...]) -> Any:
+    """Vectorised nearest-color map: one pass per palette entry, strict improve.
+
+    Distances are accumulated per channel in int32 rather than materialised as
+    an HxWxKx3 tensor.  A 2000x2000 image against 64 colors would need ~3GB in
+    that shape, which is not available to wasm32; the per-color pass needs one
+    HxW plane instead.  Max distance is 3 * 255**2 = 195075, far inside int32.
+    """
+    import numpy as np
+
+    Image, _, _ = require_pillow()
+    source = np.asarray(image.convert("RGB"), dtype=np.int32)
+    height, width = source.shape[:2]
+    best = np.full((height, width), np.iinfo(np.int32).max, dtype=np.int32)
+    index = np.zeros((height, width), dtype=np.int32)
+
+    for position, color in enumerate(palette):
+        red = source[:, :, 0] - int(color[0])
+        green = source[:, :, 1] - int(color[1])
+        blue = source[:, :, 2] - int(color[2])
+        distance = red * red + green * green + blue * blue
+        better = distance < best
+        if better.any():
+            index[better] = position
+            best[better] = distance[better]
+
+    lookup = np.asarray(palette, dtype=np.uint8)
+    # No explicit mode: Pillow 13 removes the argument, and an HxWx3 uint8
+    # array already infers RGB.
+    return Image.fromarray(lookup[index])
+
+
 def pixelize(content: bytes, config: Config, *, preserve_clusters: bool = False) -> Any:
     Image, ImageOps, _ = require_pillow()
+    try:
+        with Image.open(io.BytesIO(content)) as source:
+            source = ImageOps.exif_transpose(source).convert("RGBA")
+            return _pixelize_frame(source, config, config.size,
+                                   preserve_clusters=preserve_clusters)
+    except PixelError:
+        raise
+    except Exception as exc:
+        raise InputImageError(f"Not a decodable image: {exc}") from exc
+
+
+def pixelized_draft(content: bytes, config: Config) -> Any:
+    """The first model output reduced to the target logical grid and palette.
+
+    This is the intermediate the page shows between the two passes, and the same
+    image the refine reference is enlarged from -- so it is computed once and
+    passed to both, rather than paying for the (expensive, palette-ordered)
+    nearest-colour mapping twice.
+    """
+    Image, ImageOps, _ = require_pillow()
     with Image.open(io.BytesIO(content)) as source:
-        source = ImageOps.exif_transpose(source).convert("RGBA")
-        return _pixelize_frame(source, config, config.size,
-                               preserve_clusters=preserve_clusters)
+        frame = ImageOps.exif_transpose(source).convert("RGBA")
+    return _pixelize_frame(frame, config, config.size, preserve_clusters=True)
+
+
+def _expand_to_review(image: Any, config: Config) -> bytes:
+    Image, _, _ = require_pillow()
+    target_size = config.source_size or image.size
+    review = image.resize(target_size, Image.Resampling.NEAREST)
+    buffer = io.BytesIO()
+    review.save(buffer, "PNG")
+    return buffer.getvalue()
 
 
 def build_refine_reference(content: bytes, config: Config) -> bytes:
@@ -756,41 +814,189 @@ def build_refine_reference(content: bytes, config: Config) -> bytes:
     structure it is expected to refine. ``config.source_size`` keeps the review
     image aligned with the original aspect ratio.
     """
-    Image, ImageOps, _ = require_pillow()
-    with Image.open(io.BytesIO(content)) as source:
-        frame = ImageOps.exif_transpose(source).convert("RGBA")
-    target_size = config.source_size or frame.size
-    logical = _pixelize_frame(frame, config, config.size, preserve_clusters=True)
-    review = logical.resize(target_size, Image.Resampling.NEAREST)
+    return _expand_to_review(pixelized_draft(content, config), config)
+
+
+# --------------------------------------------------------------------------
+# guards that used to live behind the HTTP layer
+# --------------------------------------------------------------------------
+
+
+def sniff_dimensions(blob: bytes) -> tuple[int, int] | None:
+    """Read width/height from the container header, without decoding.
+
+    A byte-size cap does NOT stop a decompression bomb: a 12000x12000 PNG is
+    about 450KB on the wire and decodes to 144 megapixels.  So the dimensions
+    are read from the header first, in about a millisecond, and the image is
+    rejected before Image.open() can allocate anything.
+    """
+    try:
+        if blob[:8] == b"\x89PNG\r\n\x1a\n" and blob[12:16] == b"IHDR":
+            width, height = struct.unpack(">II", blob[16:24])
+            return int(width), int(height)
+        if blob[:6] in (b"GIF87a", b"GIF89a"):
+            width, height = struct.unpack("<HH", blob[6:10])
+            return int(width), int(height)
+        if blob[:4] == b"RIFF" and blob[8:12] == b"WEBP":
+            chunk = blob[12:16]
+            if chunk == b"VP8X":
+                width = 1 + int.from_bytes(blob[24:27], "little")
+                height = 1 + int.from_bytes(blob[27:30], "little")
+                return width, height
+            if chunk == b"VP8 ":
+                width = int.from_bytes(blob[26:28], "little") & 0x3FFF
+                height = int.from_bytes(blob[28:30], "little") & 0x3FFF
+                return width, height
+            if chunk == b"VP8L":
+                bits = int.from_bytes(blob[21:25], "little")
+                return (bits & 0x3FFF) + 1, ((bits >> 14) & 0x3FFF) + 1
+        if blob[:2] == b"\xff\xd8":
+            offset = 2
+            while offset + 9 < len(blob):
+                if blob[offset] != 0xFF:
+                    offset += 1
+                    continue
+                marker = blob[offset + 1]
+                if marker in (0xD8, 0x01) or 0xD0 <= marker <= 0xD7:
+                    offset += 2
+                    continue
+                length = struct.unpack(">H", blob[offset + 2 : offset + 4])[0]
+                # SOF0..SOF15, excluding the non-frame markers DHT/JPG/DAC.
+                if 0xC0 <= marker <= 0xCF and marker not in (0xC4, 0xC8, 0xCC):
+                    height, width = struct.unpack(">HH", blob[offset + 5 : offset + 9])
+                    return int(width), int(height)
+                offset += 2 + length
+    except (struct.error, IndexError):
+        return None
+    return None
+
+
+def sniff_content_type(blob: bytes) -> str:
+    """The raw bytes are the model's output verbatim, so the real type matters.
+
+    The old save_outputs() wrote them to a file named .ai.png regardless, which
+    was a pre-existing quirk; labelling the download accurately is the honest
+    thing to do now that the browser decides the filename.
+    """
+    if blob[:8] == b"\x89PNG\r\n\x1a\n":
+        return "image/png"
+    if blob[:2] == b"\xff\xd8":
+        return "image/jpeg"
+    if blob[:4] == b"RIFF" and blob[8:12] == b"WEBP":
+        return "image/webp"
+    if blob[:6] in (b"GIF87a", b"GIF89a"):
+        return "image/gif"
+    return "application/octet-stream"
+
+
+def check_image_limits(blob: bytes) -> None:
+    """Enforce the pixel budget for EVERY container, not just the four we sniff.
+
+    sniff_dimensions() is a fast pre-decode guard, but it only understands PNG,
+    JPEG, GIF and WebP -- a TIFF or BMP bomb passes it untouched. This falls
+    back to Pillow's lazy header read for anything else, which reads the
+    dimensions without decoding the pixels.
+    """
+    Image, _, _ = require_pillow()
+    dimensions = sniff_dimensions(blob)
+    if dimensions is None:
+        try:
+            with Image.open(io.BytesIO(blob)) as probe:
+                dimensions = probe.size
+        except Image.DecompressionBombError as exc:
+            raise LimitsError(f"Image is too large to decode safely: {exc}") from exc
+        except Exception:
+            return  # not an image at all; prepare_image() reports that properly
+    width, height = dimensions
+    if width > MAX_DIMENSION or height > MAX_DIMENSION or width * height > MAX_IMAGE_PIXELS:
+        raise LimitsError(
+            f"Image is {width}x{height} ({width * height:,} pixels); the limit is "
+            f"{MAX_IMAGE_PIXELS:,} pixels ({MAX_DIMENSION} per side)"
+        )
+
+
+def preview_scale_for(n: int) -> int:
+    """ONE authority for the preview zoom on the 256px reference canvas.
+
+    The actual output dimensions also depend on the uploaded image, so this is
+    a readable default rather than a claim about the final file dimensions.
+    """
+    return max(1, min(32, round(REFERENCE_CANVAS / n)))
+
+
+def assert_palette_subset(image: Any, palette: Any) -> None:
+    """Assert requirement 1 positively rather than trusting it.
+
+    nearest_palette() copies a palette member verbatim, so membership holds by
+    construction -- but "only ever" is the requirement, so a regression in the
+    downscale or the quantizer must be REPORTED instead of shipped.  Note that
+    transparent (alpha=0) pixels still carry a palette RGB value, so a future
+    post-processing quantizer is the one way this can break.
+    """
+    if not palette:
+        return
+    allowed = set(palette)
+    present = {rgb for _, rgb in (image.convert("RGB").getcolors(maxcolors=1 << 20) or [])}
+    offending = present - allowed
+    if offending:
+        hexes = ", ".join("#%02x%02x%02x" % rgb for rgb in sorted(offending)[:8])
+        raise PaletteViolationError(
+            f"Palette subset assertion failed: {len(offending)} colour(s) outside the "
+            f"palette reached the output ({hexes}). This is a regression in the "
+            f"downscale or quantize step, not a user error."
+        )
+
+
+def palette_histogram(image: Any) -> list[dict[str, Any]]:
+    """(hex, count) pairs, most used first.
+
+    Computed here because the report's ``palette`` is a bare hex list -- it
+    unpacks getcolors()'s (count, rgb) pairs and throws the count away.
+    """
+    pairs = image.convert("RGB").getcolors(maxcolors=1 << 20) or []
+    return [
+        {"hex": "#%02x%02x%02x" % rgb, "count": count}
+        for count, rgb in sorted(pairs, reverse=True)
+    ]
+
+
+# --------------------------------------------------------------------------
+# output
+# --------------------------------------------------------------------------
+
+
+def _png_bytes(image: Any) -> bytes:
     buffer = io.BytesIO()
-    review.save(buffer, "PNG")
+    image.save(buffer, "PNG")
     return buffer.getvalue()
 
 
-def save_outputs(input_path: Path, raw: bytes, pixel_image: Any, config: Config, out_dir: Path,
-                 refinement_applied: bool = False) -> dict[str, Any]:
-    out_dir.mkdir(parents=True, exist_ok=True)
-    stem = input_path.stem
-    raw_path = out_dir / f"{stem}.ai.png"
-    logical_path = out_dir / f"{stem}.pixel.png"
-    preview_path = out_dir / f"{stem}.pixel_x{config.scale}.png"
-    report_path = out_dir / f"{stem}.report.json"
+def render_outputs(raw: bytes, pixel_image: Any, config: Config, *,
+                   refinement_applied: bool = False,
+                   input_name: str | None = None,
+                   draft_png: bytes | None = None) -> dict[str, Any]:
+    """Turn the run into downloadable bytes plus a report.
 
-    if config.keep_raw:
-        raw_path.write_bytes(raw)
-    pixel_image.save(logical_path, "PNG")
-    preview = pixel_image.resize(
+    The old save_outputs() wrote four files into a directory and returned paths
+    to them.  There is no server filesystem now, so the bytes come back to the
+    caller and the frontend makes Blob URLs out of them; the report keeps the
+    same shape minus the path fields, which had nothing to point at.
+    """
+    Image, _, _ = require_pillow()
+    buffer = io.BytesIO()
+    pixel_image.save(buffer, "PNG")
+    pixel_png = buffer.getvalue()
+
+    preview_image = pixel_image.resize(
         (pixel_image.width * config.scale, pixel_image.height * config.scale),
-        resample=require_pillow()[0].Resampling.NEAREST,
+        resample=Image.Resampling.NEAREST,
     )
-    preview.save(preview_path, "PNG")
+    preview_buffer = io.BytesIO()
+    preview_image.save(preview_buffer, "PNG")
 
     colors = pixel_image.convert("RGB").getcolors(maxcolors=1_000_000) or []
     report = {
-        "input": str(input_path),
-        "logical_output": str(logical_path),
-        "preview_output": str(preview_path),
-        "raw_output": str(raw_path) if config.keep_raw else None,
+        "input": input_name,
         "size": [pixel_image.width, pixel_image.height],
         "base_size": list(config.base_size or config.size),
         "reference_canvas": REFERENCE_CANVAS,
@@ -799,80 +1005,277 @@ def save_outputs(input_path: Path, raw: bytes, pixel_image: Any, config: Config,
         "color_count": len(colors),
         "max_colors": config.max_colors,
         "palette": ["#%02x%02x%02x" % color for _, color in colors],
+        "palette_used": palette_histogram(pixel_image),
+        "palette_requested": (
+            ["#%02x%02x%02x" % color for color in config.palette] if config.palette else None
+        ),
         "model": config.model or None,
         "protocol": f"gemini {config.api_version}",
         "refinement_applied": refinement_applied,
     }
-    report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    return report
+    return {
+        "pixel_png": pixel_png,
+        "preview_png": preview_buffer.getvalue(),
+        "raw_png": raw if config.keep_raw else None,
+        # The intermediate the page can show between the two passes, when there
+        # was a second pass at all.
+        "draft_png": draft_png,
+        "report": report,
+    }
 
 
-def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Redraw an image as true pixel art with a Gemini image model")
-    parser.add_argument("input", type=Path, help="Input image path")
-    parser.add_argument("--out-dir", type=Path, default=None, help="Output directory; defaults to PIXEL_OUT_DIR or output")
-    parser.add_argument("--size", default=None, help="Density on the 256px reference canvas, e.g. 64 or 64x64; defaults to PIXEL_SIZE")
-    parser.add_argument("--scale", type=int, default=None, help="Nearest-neighbor preview scale")
-    parser.add_argument("--max-colors", type=int, default=None, help="Maximum colors when PIXEL_PALETTE=auto")
-    parser.add_argument("--palette", default=None, help="auto or comma-separated #RRGGBB values")
-    parser.add_argument("--prompt", default=None, help="Extra/full redraw prompt")
-    parser.add_argument("--keep-raw", action="store_true", help="Keep the raw image returned by the model")
-    parser.add_argument("--pixelize-only", action="store_true", help="Skip the model call and pixelize the input image")
-    parser.add_argument("--passes", type=int, choices=(1, 2), default=None,
-                        help="Image-model passes; defaults to PIXEL_GENERATION_PASSES or 2")
-    return parser
+# --------------------------------------------------------------------------
+# error envelope
+# --------------------------------------------------------------------------
+
+_SECONDARY_PATTERNS = (
+    re.compile(r"(x-goog-api-key\s*[:=]\s*)\S+", re.IGNORECASE),
+    re.compile(r'("(?:api[_-]?key|apikey|key|token)"\s*:\s*")([^"]{6,})(")', re.IGNORECASE),
+    re.compile(r"(Authorization\s*[:=]\s*)\S+", re.IGNORECASE),
+    re.compile(r"(Bearer\s+)\S+", re.IGNORECASE),
+    re.compile(r"AIza[0-9A-Za-z_\-]{35}"),
+)
+_LONG_BASE64 = re.compile(r"[A-Za-z0-9+/]{120,}={0,2}")
+_USERINFO = re.compile(r"(https?://)[^/@\s]+@")
 
 
-def main(argv: list[str] | None = None) -> int:
-    parser = build_parser()
-    args = parser.parse_args(argv)
-    load_dotenv()
-    try:
-        config = build_config(args)
-        input_path = args.input.expanduser().resolve()
-        if not input_path.is_file():
-            raise ValueError(f"Input image does not exist: {input_path}")
-        Image, _, _ = require_pillow()
-        with Image.open(input_path) as probe:
-            config = configure_for_source(config, probe.size)
-        if config.scale < 1 or config.scale > 32:
-            raise ValueError("Scale must be between 1 and 32")
-        if config.max_colors < 2 or config.max_colors > 256:
-            raise ValueError("Max colors must be between 2 and 256")
+def redact(text: str, api_key: str) -> str:
+    """Remove secret material from anything headed for the screen.
 
-        refinement_applied = False
-        if args.pixelize_only:
-            raw = input_path.read_bytes()
+    Applied to EVERY string field of the error envelope -- message, hint,
+    where, detail and traceback -- because a traceback can carry a frame's
+    local variables and is therefore not exempt.
+
+    The exact key and its base64 form are replaced first (we know the secret,
+    so this is exact rather than heuristic); the pattern sweep afterwards is a
+    backstop for credentials we do not hold, such as a key an upstream error
+    echoes after a rotation.
+
+    This mattered when the server held one key.  It matters more now that the
+    key is the user's own and the error text is rendered in their browser: a
+    gateway that echoes the request headers would otherwise print the key into
+    the page, the copy button, and any screenshot of the console.
+    """
+    if not text:
+        return text
+    if api_key and len(api_key) >= 6:
+        text = text.replace(api_key, "[redacted:api_key]")
+        encoded = base64.b64encode(api_key.encode()).decode()
+        text = text.replace(encoded, "[redacted:api_key:b64]")
+    for pattern in _SECONDARY_PATTERNS:
+        if pattern.groups >= 3:
+            text = pattern.sub(lambda m: m.group(1) + "[redacted]" + m.group(3), text)
+        elif pattern.groups >= 1:
+            text = pattern.sub(lambda m: m.group(1) + "[redacted]", text)
         else:
-            print(
-                f"Calling model {config.model!r} via {config.api_version} "
-                f"generateContent at {safe_host(config.base_url)} ...",
-                file=sys.stderr,
-            )
-            response = call_gemini(input_path, config)
-            raw = extract_image(response)
-            if config.passes == 2:
-                print("Refining pixel shapes and contours with a second model pass ...",
-                      file=sys.stderr)
-                try:
-                    refined = call_gemini(input_path, config, draft=raw)
-                    raw = extract_image(refined)
-                    refinement_applied = True
-                except (PixelError, OSError, ValueError) as exc:
-                    print(f"Refinement failed ({type(exc).__name__}); using the first draft.",
-                          file=sys.stderr)
-
-        out_dir = Path(args.out_dir or os.getenv("PIXEL_OUT_DIR", "output")).expanduser()
-        report = save_outputs(input_path, raw,
-                              pixelize(raw, config, preserve_clusters=not args.pixelize_only),
-                              config, out_dir,
-                              refinement_applied=refinement_applied)
-        print(json.dumps(report, ensure_ascii=False, indent=2))
-        return 0
-    except (OSError, ValueError, RuntimeError) as exc:
-        print(f"Error: {exc}", file=sys.stderr)
-        return 1
+            text = pattern.sub("[redacted:key-shaped]", text)
+    text = _USERINFO.sub(r"\1[redacted]@", text)
+    text = _LONG_BASE64.sub(lambda m: f"[base64 {len(m.group(0))} chars omitted]", text)
+    return text
 
 
-if __name__ == "__main__":
-    raise SystemExit(main())
+def sanitize_response(value: Any, depth: int = 0) -> Any:
+    """Strip long strings from an upstream response so it is safe to keep.
+
+    Any string over 2000 characters becomes a placeholder.  That removes the
+    inline base64 image and any long echoed blob while leaving the model's
+    short explanation text -- which is the whole point, because
+    value_for_hint() truncates at 240 characters and compact_json at 1000, so
+    a 900-character refusal would otherwise reach the user as 240.
+    """
+    if depth > 12:
+        return "<depth limit>"
+    if isinstance(value, dict):
+        return {str(k): sanitize_response(v, depth + 1) for k, v in value.items()}
+    if isinstance(value, list):
+        return [sanitize_response(item, depth + 1) for item in value[:50]]
+    if isinstance(value, str):
+        # The budget has to clear a model's prose explanation (which is the
+        # point of keeping this) while still removing an inline base64 image,
+        # and no real image is under 2KB.
+        if len(value) > 2000:
+            return f"<{len(value)}-char string omitted>"
+        return value
+    return value
+
+
+def classify(exc: BaseException, where: str = "") -> str:
+    """Map an exception to an error kind, structurally.
+
+    Pillow's exception types are matched by name rather than by isinstance so
+    that importing this module never requires Pillow; classify() is used on the
+    failure path, which is exactly where a Pillow import could itself fail.
+    """
+    if isinstance(exc, PixelError):
+        return exc.kind
+    if isinstance(exc, (TimeoutError,)) or type(exc).__name__ == "TimeoutException":
+        return "upstream_timeout"
+    name = type(exc).__name__
+    if name == "DecompressionBombError":
+        return "limits"
+    if name == "UnidentifiedImageError":
+        return "input_image"
+    if isinstance(exc, (BrokenPipeError, ConnectionResetError)):
+        # During the upstream exchange this is far more often the endpoint
+        # dropping the connection than the user's browser.
+        if where in ("upstream_wait", "refine_wait", "extract_image"):
+            return "upstream_transport"
+        return "client_disconnect"
+    if isinstance(exc, (ValueError, KeyError, TypeError, AttributeError)):
+        return "config"
+    return "internal"
+
+
+def to_envelope(
+    exc: BaseException,
+    api_key: str,
+    where: str = "",
+    phase: str | None = None,
+    include_traceback: bool = False,
+) -> dict[str, Any]:
+    """Build the ONE error shape the frontend renders.
+
+    The frontend classifies by ``kind`` and shows message/hint/detail/
+    http_status/where/phase, so nothing here may change without changing
+    static/js/errors.js.
+    """
+    import traceback
+
+    kind = classify(exc, where)
+    detail = getattr(exc, "detail", "") or ""
+    status = getattr(exc, "status", None)
+
+    envelope: dict[str, Any] = {
+        "kind": kind,
+        "phase": phase,
+        "where": where,
+        "exception": f"{type(exc).__module__}.{type(exc).__name__}",
+        "message": redact(str(exc), api_key),
+        "detail": redact(detail[:4000], api_key) + ("...[truncated]" if len(detail) > 4000 else ""),
+        "http_status": status,
+        "hint": "",
+    }
+    if kind == "upstream_http" and status:
+        envelope["hint"] = f"上游返回 HTTP {status}。"
+    if include_traceback:
+        envelope["traceback"] = redact(
+            "".join(traceback.format_exception(type(exc), exc, exc.__traceback__)), api_key
+        )
+    return envelope
+
+
+# --------------------------------------------------------------------------
+# orchestration
+# --------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class Generation:
+    """What one run produced: the model's raw bytes and the rendered artifacts."""
+
+    raw: bytes
+    refinement_applied: bool
+    outputs: dict[str, Any]
+
+
+EmitFn = Callable[..., None]
+UpstreamFn = Callable[[dict[str, Any]], Awaitable[dict[str, Any]]]
+
+
+async def generate(
+    config: Config,
+    source_bytes: bytes,
+    call_upstream: UpstreamFn,
+    *,
+    pixelize_only: bool = False,
+    preserve_clusters: bool | None = None,
+    emit: EmitFn | None = None,
+    input_name: str | None = None,
+) -> Generation:
+    """Run the whole pipeline: model passes, pixelization, guards, rendering.
+
+    This is where the CLI's main() and the deleted web layer's work() both
+    collapse.  It is async because the transport is async in the browser, but
+    the transport itself is injected, so the tests drive the identical code with
+    a fake that returns canned responses and no network exists anywhere.
+
+    Progress is emitted between awaits, never per pixel: a JS<->Python call
+    costs tens of microseconds, so per-pixel events would be pure overhead.
+    """
+    def announce(phase: str, label: str, detail: str = "") -> None:
+        if emit is not None:
+            emit(phase, label, detail)
+
+    announce("received", "已收到图片", input_name or "")
+
+    Image, _, _ = require_pillow()
+    check_image_limits(source_bytes)
+    try:
+        with Image.open(io.BytesIO(source_bytes)) as probe:
+            source_size = probe.size
+    except Exception as exc:
+        raise InputImageError(f"Not a decodable image: {exc}") from exc
+    config = configure_for_source(config, source_size)
+
+    announce("encoding", "正在编码请求", f"{source_size[0]}x{source_size[1]} 源图")
+
+    refinement_applied = False
+    draft_png = None
+    if pixelize_only:
+        raw = source_bytes
+    else:
+        validate_upstream(config)
+
+        announce("upstream_wait", "正在调用模型", f"{config.model} @ {safe_host(config.base_url)}")
+        response = await call_upstream(build_payload(source_bytes, config))
+        announce("upstream_response", "模型已返回", "")
+
+        announce("extract_start", "正在解析模型输出", "")
+        raw = extract_image(response)
+        announce("extracted", "已取得模型输出", f"{len(raw)} 字节")
+
+        if config.passes == 2:
+            announce("refine_wait", "正在第二轮精修", "")
+            # Computed once and reused: the same reduced draft is both the
+            # reference the model refines from and the intermediate the page
+            # displays. Recomputing it would double the palette-mapping cost,
+            # which is the most expensive step in the pipeline.
+            draft_image = pixelized_draft(raw, config)
+            try:
+                refined_response = await call_upstream(
+                    build_payload(source_bytes, config, draft=raw, draft_image=draft_image)
+                )
+                announce("refine_response", "第二轮已返回", "")
+                raw = extract_image(refined_response)
+                refinement_applied = True
+                draft_png = _png_bytes(draft_image)
+                announce("refined", "精修完成", "")
+            except (PixelError, ValueError) as exc:
+                # A failed refinement is a degradation, not a failure: the first
+                # draft is already a complete result, so the run continues and
+                # the report says refinement_applied = false.
+                announce("refine_response", "第二轮失败，沿用首轮草稿",
+                         f"{type(exc).__name__}: {exc}")
+
+    announce("pixelizing", "正在像素化", "")
+    # Two different jobs share the pixelize-only path: reducing the user's own
+    # photo (BOX averaging, because a photo's pixels should be averaged), and
+    # re-rendering the model's output at a new density or palette (NEAREST,
+    # because the model drew deliberate clusters that must not be smeared).
+    if preserve_clusters is None:
+        preserve_clusters = not pixelize_only
+    pixel_image = pixelize(raw, config, preserve_clusters=preserve_clusters)
+
+    announce("verifying", "正在校验调色板", "")
+    assert_palette_subset(pixel_image, config.palette)
+
+    announce("saving", "正在生成产物", "")
+    outputs = render_outputs(
+        raw, pixel_image, config,
+        refinement_applied=refinement_applied,
+        input_name=input_name,
+        draft_png=draft_png,
+    )
+
+    announce("done", "完成", "")
+    return Generation(raw=raw, refinement_applied=refinement_applied, outputs=outputs)

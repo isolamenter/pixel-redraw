@@ -1,0 +1,20 @@
+# 一个服务，一个端口，没有卷。
+#
+# 没有卷是有意的，不是省事：这个应用不写任何东西。没有数据库、没有 runs/ 目录、
+# 没有会话存储、没有服务端日志需要保留——每个用户的 key 和产物都只活在他自己的
+# 浏览器里。所以备份、迁移、扩容都只是「把这一个容器起起来」。
+services:
+  pixel-redraw:
+    build: .
+    image: pixel-redraw:latest
+    container_name: pixel-redraw
+    ports:
+      - "8080:80"
+    restart: unless-stopped
+    # 容器内无状态，给它一个只读根并禁掉提权：万一 nginx 被攻破也写不了东西。
+    read_only: true
+    tmpfs:
+      - /var/cache/nginx
+      - /var/run
+    security_opt:
+      - no-new-privileges:true

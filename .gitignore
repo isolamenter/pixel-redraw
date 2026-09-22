@@ -1,9 +1,11 @@
-.env
 .venv/
 .uv-cache/
 __pycache__/
 *.py[cod]
-output/
-runs/
+
+# Pyodide runtime fetched for the Node smoke test (npm run dist, ~17MB)
+tools/node_modules/
+tools/pyodide-dist/
+tools/package-lock.json
 
 .DS_Store
