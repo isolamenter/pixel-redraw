@@ -5,6 +5,7 @@ import { $, clear, el, note } from './dom.js';
 /* 改密度 / 换调色板都要对缓存的首轮模型输出重新量化（0 token），
    那条路径在 pipeline.js 里。这里的循环引用是良性的：两边都只在运行时调用对方。 */
 import { scheduleRepixelize } from './pipeline.js';
+import { applyDefaultZoom } from './results.js';
 
 export var SIZE_TRUTH = {
   8: "极限抽象，适合图标 / 表情",

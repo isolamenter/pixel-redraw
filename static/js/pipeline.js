@@ -199,17 +199,25 @@ function onDone(envelope) {
   }
 
   var result = envelope.result;
-  S.lastResultRawB64 = result.raw_png || null;
+  if (result.raw_png) S.lastResultRawB64 = result.raw_png;
+  if (result.draft_png) {
+    S.lastResultDraftB64 = result.draft_png;
+  } else if (S.lastResultSource !== "repixelize") {
+    S.lastResultDraftB64 = null;
+  }
   revokeResultUrls();
+
+  var draftB64 = result.draft_png || (S.lastResultSource === "repixelize" ? S.lastResultDraftB64 : null);
 
   var urls = {
     pixel: URL.createObjectURL(b64ToBlob(result.pixel_png, "image/png")),
     preview: URL.createObjectURL(b64ToBlob(result.preview_png, "image/png")),
-    raw: result.raw_png ? URL.createObjectURL(b64ToBlob(result.raw_png, result.raw_mime || "image/png")) : null,
-    draft: null
+    raw: (result.raw_png || S.lastResultRawB64) ? URL.createObjectURL(b64ToBlob(result.raw_png || S.lastResultRawB64, result.raw_mime || "image/png")) : null,
+    draft: draftB64 ? URL.createObjectURL(b64ToBlob(draftB64, "image/png")) : null
   };
   S.objectUrls.push(urls.pixel, urls.preview);
   if (urls.raw) S.objectUrls.push(urls.raw);
+  if (urls.draft) S.objectUrls.push(urls.draft);
 
   var container = {
     result: {
@@ -218,8 +226,9 @@ function onDone(envelope) {
       palette_requested: result.report.palette_requested,
       palette_used: result.report.palette_used,
       color_count: result.report.color_count,
-      has_raw: !!result.raw_png,
-      refinement_applied: result.refinement_applied,
+      has_raw: !!(result.raw_png || S.lastResultRawB64),
+      refinement_applied: result.refinement_applied !== undefined ? result.refinement_applied : !!draftB64,
+      draft_size: result.draft_size || (draftB64 ? result.report.size : null),
       urls: urls,
       report: result.report
     },
@@ -228,7 +237,7 @@ function onDone(envelope) {
   finishRun(container);
   setStatus("open", result.refinement_applied
     ? "完成：两轮生成，且像素已量化到目标网格与调色板。"
-    : "完成：像素已量化到目标网格与调色板。");
+    : (S.lastResultSource === "repixelize" ? "完成：本地重渲染已完成。" : "完成：像素已量化到目标网格与调色板。"));
 
   if (!result.refinement_applied && settings.passes === 2 && !S.pixelizeOnly) {
     addTimeline("-", "note", "第二轮未生效（可能失败或未开启），本次结果是第一轮草稿量化后的样子。",
@@ -355,7 +364,7 @@ export function startGenerate() {
       }, { source: "frontend" });
       return;
     }
-    resetRunUI();
+    resetRunUI(false);
     beginRun(baseRequest(S.pixelizeOnly, false), b64);
   }).catch(function (error) {
     report(error, "startGenerate");
@@ -379,18 +388,17 @@ export function doRepixelize(reason) {
     return;
   }
   addTimeline("-", "repixelize", "本地重渲染（不调用模型）：" + (reason || ""), null, null, "info");
-  S.lastResultSource = "repixelize";
-  resetRunUI();
+  resetRunUI(true);
   beginRun(baseRequest(true, true), S.lastResultRawB64);
 }
 
 /* 开一次新的运行：时间线只保留本次运行，阶段表清空。
    注意这里不 revoke 结果图的 blob URL —— 上一次的结果在新图出来之前仍然显示着。 */
-export function resetRunUI() {
+export function resetRunUI(isRepixelize) {
   S.phasesSeen = {};
   S.currentPhase = null;
   S.failedPhase = null;
-  S.lastResultSource = "generate";
+  S.lastResultSource = isRepixelize ? "repixelize" : "generate";
   S.elapsedMs = 0;
   clear($("#timeline"));
   $("#timeline").appendChild(el("p", { class: "empty", text: "本次运行的事件时间线：" }));
@@ -398,10 +406,13 @@ export function resetRunUI() {
   indetEl.hidden = true;
   indetLbl.hidden = true;
   upbarEl.hidden = true;
-  renderIntermediate({ urls: { draft: null } });   // 上一次的中间图不能留在新一跑里
-  addTimeline("-", "start", "开始运行",
+  if (!isRepixelize) {
+    S.lastResultDraftB64 = null;
+    renderIntermediate({ urls: { draft: null } });   // 上一次的中间图不能留在新一跑里
+  }
+  addTimeline("-", "start", isRepixelize ? "开始本地重渲染" : "开始运行",
     { size: S.size, palette: paletteForRequest(), max_colors: S.maxColors,
-      pixelize_only: S.pixelizeOnly, model: settings.model || "(未填)" },
+      pixelize_only: S.pixelizeOnly || !!isRepixelize, model: settings.model || "(未填)" },
     null, "info");
   renderStepper();
 }

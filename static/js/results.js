@@ -84,7 +84,6 @@ export function applyDefaultZoom() {
   /* preview_scales 是服务端唯一权威的放大倍数；这里只是拿它当屏幕上默认的整数缩放 */
   if (typeof z === "number" && [1, 2, 4, 8, 16, 32].indexOf(z) >= 0) S.zoom = z;
   else S.zoom = Math.max(1, Math.min(32, Math.floor(256 / n)));
-  S.oneToOne = false;
   renderZoom();
 }
 
@@ -93,14 +92,16 @@ export function renderZoom() {
   clear(box);
   var steps = [1, 2, 4, 8, 16, 32];
   steps.forEach(function (z) {
-    var b = el("button", { type: "button", class: "btn-sm", disabled: !S.result, text: "×" + z });
+    var label = (z === 1) ? "1:1 真实尺寸" : ("×" + z);
+    var b = el("button", { type: "button", class: "btn-sm", disabled: !S.result, text: label });
     /* 只允许整数倍：非整数缩放会把像素画重新插值成糊的 */
-    b.addEventListener("click", function () { S.zoom = z; S.oneToOne = false; syncZoomPressed(); applyZoom(); });
+    b.addEventListener("click", function () {
+      S.zoom = z;
+      syncZoomPressed();
+      applyZoom();
+    });
     box.appendChild(b);
   });
-  var one = el("button", { type: "button", class: "btn-sm", disabled: !S.result, text: "1:1 真实尺寸" });
-  one.addEventListener("click", function () { S.oneToOne = true; syncZoomPressed(); applyZoom(); });
-  box.appendChild(one);
   syncZoomPressed();
   applyZoom();
 }
@@ -109,7 +110,7 @@ export function syncZoomPressed() {
   var btns = document.querySelectorAll("#zooms button");
   var steps = [1, 2, 4, 8, 16, 32];
   for (var i = 0; i < btns.length; i++) {
-    var on = (i < steps.length) ? (!S.oneToOne && S.zoom === steps[i]) : S.oneToOne;
+    var on = (S.zoom === steps[i]);
     btns[i].setAttribute("aria-pressed", on ? "true" : "false");
     btns[i].disabled = !S.result;
   }
@@ -135,12 +136,12 @@ export function applyZoom() {
   var img = $("#stage-pixel").querySelector("img");
   if (!img || !S.result || !S.result.size) return;
   var n = S.result.size[0];
-  var z = S.oneToOne ? 1 : S.zoom;
+  var z = S.zoom || 1;
   img.style.width = (n * z) + "px";
   img.style.height = (n * z) + "px";
   /* 1:1 指的是 CSS 像素；HiDPI 屏上每个逻辑像素仍占 devicePixelRatio 个设备像素 */
   $("#zoom-info").textContent = "逻辑 " + n + "×" + S.result.size[1] + " → 显示 " + (n * z) + "×" +
-    (S.result.size[1] * z) + " px" + (S.oneToOne ? "（1:1，CSS 像素）" : "（整数倍 ×" + z + "）") +
+    (S.result.size[1] * z) + " px" + (z === 1 ? "（1:1 真实尺寸）" : "（整数倍 ×" + z + "）") +
     (n * z > 520 ? "；超出预览框，可在框内滚动" : "");
 }
 

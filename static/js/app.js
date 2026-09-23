@@ -102,6 +102,12 @@ function boot() {
   $("#generate").addEventListener("click", startGenerate);
   $("#repixelize").addEventListener("click", function () { doRepixelize("手动重新渲染"); });
   cancelBtn.addEventListener("click", cancelRun);
+  document.addEventListener("click", function (e) {
+    var a = e.target && e.target.closest ? e.target.closest("a") : null;
+    if (a && (a.classList.contains("is-disabled") || a.getAttribute("aria-disabled") === "true" || !a.getAttribute("href"))) {
+      e.preventDefault();
+    }
+  });
   var clearKey = $("#cfg-clear-key");
   if (clearKey) {
     clearKey.addEventListener("click", function () {

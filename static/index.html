@@ -238,32 +238,29 @@
         </div>
       </div>
       <div id="raw-wrap" class="result-card">
-        <p class="cap">AI 原始输出 <span class="dim">· 未过格式层</span> · <a class="is-disabled" id="raw-open" href="#" target="_blank" rel="noopener" aria-disabled="true" tabindex="-1">新窗口查看</a></p>
+        <p class="cap">AI 原始输出 <span class="dim">· 未过格式层</span> · <a class="is-disabled" id="raw-open" target="_blank" rel="noopener" aria-disabled="true" tabindex="-1">新窗口查看</a></p>
         <div class="stage stage-fit" id="stage-raw">
           <span class="stage-empty">等待原始输出…</span>
         </div>
       </div>
-      <div class="result-card final-card final-row">
-        <div class="final-main">
-          <p class="cap">最终像素图 <span id="cap-logical" class="mono">—</span><span class="dim"> · 棋盘格 = 透明</span></p>
-          <div class="stage" id="stage-pixel">
-            <span class="stage-empty">结果预览区（已预留）</span>
-          </div>
+      <div id="pixel-wrap" class="result-card">
+        <p class="cap">最终像素图 <span id="cap-logical" class="mono">—</span><span class="dim"> · 棋盘格 = 透明</span></p>
+        <div class="stage" id="stage-pixel">
+          <span class="stage-empty">结果预览区（已预留）</span>
         </div>
-        <aside class="final-controls">
-          <p class="cap">缩放</p>
-          <span id="zooms" class="row-tight">
-            <button type="button" class="btn-sm" disabled>×1</button>
-            <button type="button" class="btn-sm" disabled>×2</button>
-            <button type="button" class="btn-sm" disabled>×4</button>
-            <button type="button" class="btn-sm" disabled>×8</button>
-            <button type="button" class="btn-sm" disabled>×16</button>
-            <button type="button" class="btn-sm" disabled>×32</button>
-            <button type="button" class="btn-sm" disabled>1:1 真实尺寸</button>
-          </span>
-          <span class="kv" id="zoom-info"></span>
-        </aside>
       </div>
+      <aside class="result-card zoom-card" id="zoom-controls">
+        <p class="cap">缩放</p>
+        <div id="zooms" class="zoom-stack">
+          <button type="button" class="btn-sm" disabled>1:1 真实尺寸</button>
+          <button type="button" class="btn-sm" disabled>×2</button>
+          <button type="button" class="btn-sm" disabled>×4</button>
+          <button type="button" class="btn-sm" disabled>×8</button>
+          <button type="button" class="btn-sm" disabled>×16</button>
+          <button type="button" class="btn-sm" disabled>×32</button>
+        </div>
+        <span class="kv" id="zoom-info"></span>
+      </aside>
     </div>
 
     <div id="result-note" class="hintline"></div>
@@ -286,10 +283,10 @@
 
     <h3>下载 <span class="dim tiny">纯 &lt;a download&gt;，图片是本页内存里的 blob</span></h3>
     <div class="row-tight" id="downloads">
-      <a class="btn btn-sm is-disabled" id="download-draft" href="#" aria-disabled="true" tabindex="-1">下载首轮量化中间图</a>
-      <a class="btn btn-sm is-disabled" id="download-pixel" href="#" aria-disabled="true" tabindex="-1">下载 logical PNG</a>
-      <a class="btn btn-sm is-disabled" id="download-preview" href="#" aria-disabled="true" tabindex="-1">下载 nearest 放大预览</a>
-      <a class="btn btn-sm is-disabled" id="download-raw" href="#" aria-disabled="true" tabindex="-1">下载模型原始输出</a>
+      <a class="btn btn-sm is-disabled" id="download-draft" aria-disabled="true" tabindex="-1">下载首轮量化中间图</a>
+      <a class="btn btn-sm is-disabled" id="download-pixel" aria-disabled="true" tabindex="-1">下载 logical PNG</a>
+      <a class="btn btn-sm is-disabled" id="download-preview" aria-disabled="true" tabindex="-1">下载 nearest 放大预览</a>
+      <a class="btn btn-sm is-disabled" id="download-raw" aria-disabled="true" tabindex="-1">下载模型原始输出</a>
     </div>
 
     <div class="row-tight resource-actions" style="margin-top:10px">
