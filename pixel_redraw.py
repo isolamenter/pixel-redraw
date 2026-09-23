@@ -26,7 +26,11 @@ import json
 import re
 import struct
 from dataclasses import dataclass, replace
+import math
 from typing import Any, Awaitable, Callable, Iterable
+
+import pixel_color
+import pixel_reduce
 
 
 DEFAULT_PROMPT = """Redraw the provided image as clean, deliberate pixel art.
@@ -229,6 +233,7 @@ class Config:
     refine_prompt: str = ""
     refine_prompt_template: str = ""
     passes: int = 2
+    reducer_config: pixel_reduce.ReducerConfig = pixel_reduce.DEFAULT_REDUCER_CONFIG
 
 
 # --------------------------------------------------------------------------
@@ -253,6 +258,7 @@ def make_config(
     response_modalities: tuple[str, ...] | None = None,
     image_size: str = "",
     passes: int = 2,
+    reducer_config: pixel_reduce.ReducerConfig | dict[str, Any] | None = None,
 ) -> Config:
     """Build a Config from explicit values.
 
@@ -301,6 +307,16 @@ def make_config(
     refine_prompt_template = refine_prompt or REFINE_PROMPT
     modalities = ("TEXT", "IMAGE") if response_modalities is None else tuple(response_modalities)
 
+    if isinstance(reducer_config, dict):
+        valid = set(pixel_reduce.ReducerConfig.__dataclass_fields__.keys())
+        resolved_reducer = pixel_reduce.ReducerConfig(
+            **{k: v for k, v in reducer_config.items() if k in valid}
+        )
+    elif isinstance(reducer_config, pixel_reduce.ReducerConfig):
+        resolved_reducer = reducer_config
+    else:
+        resolved_reducer = pixel_reduce.DEFAULT_REDUCER_CONFIG
+
     return Config(
         base_url=(base_url or DEFAULT_BASE_URL).strip(),
         api_key=api_key.strip(),
@@ -319,6 +335,7 @@ def make_config(
         prompt_template=prompt_template,
         refine_prompt_template=refine_prompt_template,
         passes=passes,
+        reducer_config=resolved_reducer,
     )
 
 
@@ -358,24 +375,25 @@ def parse_size(value: Any) -> tuple[int, int]:
     return width, height
 
 
+target_grid = pixel_reduce.target_grid
+
+
 def proportional_size(source_size: tuple[int, int], base_size: tuple[int, int],
                       reference: int = REFERENCE_CANVAS) -> tuple[int, int]:
-    """Map a source image onto a density measured on a reference canvas.
+    """Map a source image onto the target logical grid where the longest edge equals density.
 
-    A 256x256 source at density 64 becomes 64x64. A 1024x1024 source at the
-    same density becomes 256x256. Width and height are scaled independently by
-    the same reference, so non-square images keep their aspect ratio.
+    Per Section 5 of the technical design, density (e.g. 8, 16, 32, 64, 128)
+    defines the logical pixel count on the longest edge while strictly
+    preserving aspect ratio.
     """
-    if reference < 1:
-        raise SizeError("Reference canvas must be positive")
     source_width, source_height = source_size
     base_width, base_height = base_size
     if source_width < 1 or source_height < 1:
         raise SizeError("Source image dimensions must be positive")
-    return (
-        max(1, int(round(source_width * base_width / reference))),
-        max(1, int(round(source_height * base_height / reference))),
-    )
+    if base_width < 1 or base_height < 1:
+        raise SizeError("Base density must be positive")
+    density = max(base_width, base_height)
+    return pixel_reduce.target_grid(source_size, density)
 
 
 def configure_for_source(config: Config, source_size: tuple[int, int]) -> Config:
@@ -481,29 +499,46 @@ def prepare_image(data: bytes, mime_hint: str = "", filename: str = "") -> tuple
     return "image/png", base64.b64encode(buffer.getvalue()).decode("ascii")
 
 
+def reduce_photo(content: Any, config: Config) -> pixel_reduce.ReductionResult:
+    """Downsample and quantize natural user photos for the reference canvas."""
+    return pixel_reduce.reduce_photo(
+        content,
+        target_size=config.size,
+        palette=config.palette,
+        max_colors=config.max_colors,
+        config=config.reducer_config,
+    )
+
+
+def reduce_model_pixel_art(content: Any, config: Config) -> pixel_reduce.ReductionResult:
+    """Reduce AI-generated pixel art or repixelize cached raw outputs."""
+    return pixel_reduce.reduce_pixel_art(
+        content,
+        target_size=config.size,
+        palette=config.palette,
+        max_colors=config.max_colors,
+        config=config.reducer_config,
+    )
+
+
 def _pixelize_frame(source: Any, config: Config, size: tuple[int, int],
                     preserve_clusters: bool = False) -> Any:
-    """Resize and quantize once; sample model-drawn clusters without averaging them."""
-    Image, _, _ = require_pillow()
-    rgba = source.convert("RGBA")
-    solid = rgba.getchannel("A").point(lambda value: 255 if value >= 128 else 0)
-    sampler = Image.Resampling.NEAREST if preserve_clusters else Image.Resampling.BOX
-    alpha = solid.resize(size, sampler).point(
-        lambda value: 255 if value >= 128 else 0
-    )
-    rgb = rgba.convert("RGB").resize(size, sampler)
-
-    if config.palette:
-        rgb = nearest_palette(rgb, config.palette)
-    else:
-        rgb = rgb.quantize(
-            colors=config.max_colors,
-            method=Image.Quantize.MEDIANCUT,
-            dither=Image.Dither.NONE,
-        ).convert("RGB")
-
-    rgb.putalpha(alpha)
-    return rgb
+    """Backwards-compatible helper: resize and quantize frame using pixel_reduce."""
+    if preserve_clusters:
+        return pixel_reduce.reduce_pixel_art(
+            source,
+            target_size=size,
+            palette=config.palette,
+            max_colors=config.max_colors,
+            config=config.reducer_config,
+        ).image
+    return pixel_reduce.reduce_photo(
+        source,
+        target_size=size,
+        palette=config.palette,
+        max_colors=config.max_colors,
+        config=config.reducer_config,
+    ).image
 
 
 def build_reference_image(source_bytes: bytes, config: Config) -> tuple[str, str]:
@@ -516,7 +551,7 @@ def build_reference_image(source_bytes: bytes, config: Config) -> tuple[str, str
     Image, ImageOps, _ = require_pillow()
     with Image.open(io.BytesIO(source_bytes)) as source:
         frame = ImageOps.exif_transpose(source).convert("RGBA")
-    logical = _pixelize_frame(frame, config, config.size)
+    logical = reduce_photo(frame, config).image
     guide = logical.resize(frame.size, Image.Resampling.NEAREST)
     buffer = io.BytesIO()
     guide.save(buffer, "PNG")
@@ -698,21 +733,32 @@ def extract_image(response: dict[str, Any]) -> bytes:
     )
 
 
+def _srgb_to_oklab_scalar(r: int, g: int, b: int) -> tuple[float, float, float]:
+    cr = r / 255.0
+    cg = g / 255.0
+    cb = b / 255.0
+    lr = cr / 12.92 if cr <= 0.04045 else ((cr + 0.055) / 1.055) ** 2.4
+    lg = cg / 12.92 if cg <= 0.04045 else ((cg + 0.055) / 1.055) ** 2.4
+    lb = cb / 12.92 if cb <= 0.04045 else ((cb + 0.055) / 1.055) ** 2.4
+
+    l = 0.4122214708 * lr + 0.5363325363 * lg + 0.0514459929 * lb
+    m = 0.2119034982 * lr + 0.6806995451 * lg + 0.1073969566 * lb
+    s = 0.0883024619 * lr + 0.2817188376 * lg + 0.6299787005 * lb
+
+    l_ = max(l, 0.0) ** (1.0 / 3.0)
+    m_ = max(m, 0.0) ** (1.0 / 3.0)
+    s_ = max(s, 0.0) ** (1.0 / 3.0)
+
+    L = 0.2104542553 * l_ + 0.7936177850 * m_ - 0.0040720468 * s_
+    a = 1.9779984951 * l_ - 2.4285922050 * m_ + 0.4505937099 * s_
+    b = 0.0259040371 * l_ + 0.7827717662 * m_ - 0.8086757660 * s_
+    return L, a, b
+
+
 def nearest_palette(image: Any, palette: tuple[tuple[int, int, int], ...]) -> Any:
-    """Map each RGB pixel to its nearest explicit palette color.
+    """Map each RGB pixel to its nearest explicit palette color in Oklab space.
 
-    Ties resolve to the LOWEST palette index, and that is load-bearing: the
-    documented preset order is part of the result, so the lists must not be
-    reordered to influence output.  Both implementations below honour it --
-    the pure-Python min() keeps the first minimum, and numpy's strict ``<``
-    update never lets a later index displace an equal-distance earlier one.
-
-    The numpy path exists because the fallback is genuinely too slow to ship:
-    the loop costs ~33us per pixel at 64 colors, so a 2000x2000 output (the
-    largest the density ladder can reach on a 4096px source) is over two
-    minutes of a frozen browser tab.  numpy is loaded lazily in the browser and
-    is absent from requirements.txt, so the fallback stays the reference
-    implementation and the two are asserted equal in the tests.
+    Ties resolve to the LOWEST palette index.
     """
     try:
         return _nearest_palette_numpy(image, palette)
@@ -723,59 +769,42 @@ def nearest_palette(image: Any, palette: tuple[tuple[int, int, int], ...]) -> An
     output = Image.new("RGB", image.size)
     source = image.load()
     target = output.load()
+    palette_oklab = [_srgb_to_oklab_scalar(r, g, b) for r, g, b in palette]
     for y in range(image.height):
         for x in range(image.width):
-            red, green, blue = source[x, y]
-            target[x, y] = min(
-                palette,
-                key=lambda color: (
-                    (red - color[0]) ** 2
-                    + (green - color[1]) ** 2
-                    + (blue - color[2]) ** 2
-                ),
-            )
+            L, a, b = _srgb_to_oklab_scalar(*source[x, y])
+            best_idx = 0
+            best_dist = float("inf")
+            for idx, (pL, pa, pb) in enumerate(palette_oklab):
+                dist = (L - pL) ** 2 + (a - pa) ** 2 + (b - pb) ** 2
+                if dist < best_dist:
+                    best_dist = dist
+                    best_idx = idx
+            target[x, y] = palette[best_idx]
     return output
 
 
 def _nearest_palette_numpy(image: Any, palette: tuple[tuple[int, int, int], ...]) -> Any:
-    """Vectorised nearest-color map: one pass per palette entry, strict improve.
-
-    Distances are accumulated per channel in int32 rather than materialised as
-    an HxWxKx3 tensor.  A 2000x2000 image against 64 colors would need ~3GB in
-    that shape, which is not available to wasm32; the per-color pass needs one
-    HxW plane instead.  Max distance is 3 * 255**2 = 195075, far inside int32.
-    """
+    """Vectorised nearest-color map in Oklab space."""
     import numpy as np
 
     Image, _, _ = require_pillow()
-    source = np.asarray(image.convert("RGB"), dtype=np.int32)
-    height, width = source.shape[:2]
-    best = np.full((height, width), np.iinfo(np.int32).max, dtype=np.int32)
-    index = np.zeros((height, width), dtype=np.int32)
-
-    for position, color in enumerate(palette):
-        red = source[:, :, 0] - int(color[0])
-        green = source[:, :, 1] - int(color[1])
-        blue = source[:, :, 2] - int(color[2])
-        distance = red * red + green * green + blue * blue
-        better = distance < best
-        if better.any():
-            index[better] = position
-            best[better] = distance[better]
-
+    source = np.asarray(image.convert("RGB"), dtype=np.uint8)
+    indices = pixel_color.map_to_palette(source, palette)
     lookup = np.asarray(palette, dtype=np.uint8)
-    # No explicit mode: Pillow 13 removes the argument, and an HxWx3 uint8
-    # array already infers RGB.
-    return Image.fromarray(lookup[index])
+    return Image.fromarray(lookup[indices])
 
 
-def pixelize(content: bytes, config: Config, *, preserve_clusters: bool = False) -> Any:
+def pixelize(content: bytes, config: Config, *, preserve_clusters: bool | None = None, is_photo: bool = False) -> Any:
     Image, ImageOps, _ = require_pillow()
     try:
         with Image.open(io.BytesIO(content)) as source:
             source = ImageOps.exif_transpose(source).convert("RGBA")
-            return _pixelize_frame(source, config, config.size,
-                                   preserve_clusters=preserve_clusters)
+            if preserve_clusters is not None:
+                is_photo = not preserve_clusters
+            if is_photo:
+                return reduce_photo(source, config).image
+            return reduce_model_pixel_art(source, config).image
     except PixelError:
         raise
     except Exception as exc:
@@ -787,13 +816,12 @@ def pixelized_draft(content: bytes, config: Config) -> Any:
 
     This is the intermediate the page shows between the two passes, and the same
     image the refine reference is enlarged from -- so it is computed once and
-    passed to both, rather than paying for the (expensive, palette-ordered)
-    nearest-colour mapping twice.
+    passed to both, rather than paying for the nearest-colour mapping twice.
     """
     Image, ImageOps, _ = require_pillow()
     with Image.open(io.BytesIO(content)) as source:
         frame = ImageOps.exif_transpose(source).convert("RGBA")
-    return _pixelize_frame(frame, config, config.size, preserve_clusters=True)
+    return reduce_model_pixel_art(frame, config).image
 
 
 def _expand_to_review(image: Any, config: Config) -> bytes:
@@ -974,7 +1002,8 @@ def _png_bytes(image: Any) -> bytes:
 def render_outputs(raw: bytes, pixel_image: Any, config: Config, *,
                    refinement_applied: bool = False,
                    input_name: str | None = None,
-                   draft_png: bytes | None = None) -> dict[str, Any]:
+                   draft_png: bytes | None = None,
+                   reduction: pixel_reduce.ReductionResult | None = None) -> dict[str, Any]:
     """Turn the run into downloadable bytes plus a report.
 
     The old save_outputs() wrote four files into a directory and returned paths
@@ -1012,6 +1041,15 @@ def render_outputs(raw: bytes, pixel_image: Any, config: Config, *,
         "model": config.model or None,
         "protocol": f"gemini {config.api_version}",
         "refinement_applied": refinement_applied,
+        # Section 17: Reducer and diagnostic metrics
+        "reducer": "qvote-v1",
+        "target_size": [pixel_image.width, pixel_image.height],
+        "grid_offset": list(reduction.grid_offset) if reduction is not None else [0.0, 0.0],
+        "grid_alignment_applied": bool(reduction.grid_alignment_applied) if reduction is not None else False,
+        "mean_vote_confidence": float(reduction.mean_vote_confidence) if reduction is not None else 1.0,
+        "low_confidence_cells": int(reduction.low_confidence_cells) if reduction is not None else 0,
+        "cleanup_changes": int(reduction.cleanup_changes) if reduction is not None else 0,
+        "palette_metric": "oklab",
     }
     return {
         "pixel_png": pixel_png,
@@ -1189,6 +1227,7 @@ async def generate(
     *,
     pixelize_only: bool = False,
     preserve_clusters: bool | None = None,
+    is_repixelize: bool = False,
     emit: EmitFn | None = None,
     input_name: str | None = None,
 ) -> Generation:
@@ -1240,7 +1279,8 @@ async def generate(
             # reference the model refines from and the intermediate the page
             # displays. Recomputing it would double the palette-mapping cost,
             # which is the most expensive step in the pipeline.
-            draft_image = pixelized_draft(raw, config)
+            draft_reduction = reduce_model_pixel_art(raw, config)
+            draft_image = draft_reduction.image
             try:
                 refined_response = await call_upstream(
                     build_payload(source_bytes, config, draft=raw, draft_image=draft_image)
@@ -1258,13 +1298,16 @@ async def generate(
                          f"{type(exc).__name__}: {exc}")
 
     announce("pixelizing", "正在像素化", "")
-    # Two different jobs share the pixelize-only path: reducing the user's own
-    # photo (BOX averaging, because a photo's pixels should be averaged), and
-    # re-rendering the model's output at a new density or palette (NEAREST,
-    # because the model drew deliberate clusters that must not be smeared).
-    if preserve_clusters is None:
-        preserve_clusters = not pixelize_only
-    pixel_image = pixelize(raw, config, preserve_clusters=preserve_clusters)
+    if preserve_clusters is not None:
+        use_photo = not preserve_clusters
+    else:
+        use_photo = pixelize_only and not is_repixelize
+
+    if use_photo:
+        reduction = reduce_photo(raw, config)
+    else:
+        reduction = reduce_model_pixel_art(raw, config)
+    pixel_image = reduction.image
 
     announce("verifying", "正在校验调色板", "")
     assert_palette_subset(pixel_image, config.palette)
@@ -1275,6 +1318,7 @@ async def generate(
         refinement_applied=refinement_applied,
         input_name=input_name,
         draft_png=draft_png,
+        reduction=reduction,
     )
 
     announce("done", "完成", "")

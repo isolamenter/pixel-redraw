@@ -36,6 +36,12 @@ export function normalizeResult(container) {
     elapsed_s: (typeof r.elapsed_s === "number") ? r.elapsed_s : null,
     has_raw: !!r.has_raw,
     refinement_applied: !!r.refinement_applied,
+    reducer: report.reducer || null,
+    mean_vote_confidence: report.mean_vote_confidence !== undefined ? report.mean_vote_confidence : null,
+    low_confidence_cells: report.low_confidence_cells !== undefined ? report.low_confidence_cells : null,
+    cleanup_changes: report.cleanup_changes !== undefined ? report.cleanup_changes : null,
+    grid_offset: report.grid_offset || null,
+    grid_alignment_applied: !!report.grid_alignment_applied,
     draft_size: (r.draft_size && r.draft_size.length >= 2) ? [r.draft_size[0], r.draft_size[1]] : null,
     draft_scale: (typeof r.draft_scale === "number") ? r.draft_scale : null,
     urls: {
@@ -337,6 +343,14 @@ export function renderPaletteEcho(res) {
     });
   }
   var bits = [];
+  if (res.reducer) bits.push("reducer=" + res.reducer);
+  if (res.mean_vote_confidence !== null && res.mean_vote_confidence !== undefined) {
+    bits.push("置信度=" + Math.round(res.mean_vote_confidence * 100) + "%");
+  }
+  if (res.cleanup_changes) bits.push("清理孤立点=" + res.cleanup_changes + "px");
+  if (res.grid_alignment_applied && res.grid_offset) {
+    bits.push("网格对齐=[" + res.grid_offset.join(",") + "]");
+  }
   if (res.color_count !== null) bits.push("color_count=" + res.color_count +
     "（像素计数，不等于视觉色数，见 TECHNICAL.md §4.4）");
   if (res.subset_ok !== null) bits.push("subset_ok=" + res.subset_ok);

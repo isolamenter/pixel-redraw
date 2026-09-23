@@ -12,7 +12,7 @@ COPY static/ /usr/share/nginx/html/
 # 核心 Python 源码放在 web 根上，由浏览器里的 Pyodide 直接 fetch 进 WASM 文件系统。
 # 仓库里那一份就是唯一一份：不打包、不转译、不生成副本，所以页面跑的算法
 # 和 tests/ 测的是同一段代码。
-COPY pixel_redraw.py pixel_palettes.py pixel_pipeline.py /usr/share/nginx/html/
+COPY pixel_redraw.py pixel_palettes.py pixel_pipeline.py pixel_color.py pixel_reduce.py /usr/share/nginx/html/
 
 # busybox wget 是 alpine 自带的，不需要额外装东西
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \

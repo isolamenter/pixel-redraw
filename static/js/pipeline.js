@@ -30,7 +30,13 @@ import { settings, upstreamBlock, upstreamReady } from './settings.js';
      · 本地开发（仓库根起 http.server）：访问 /static/index.html，而 /pixel_redraw.py
        正好落在仓库根上，两份文件是同一次读取。
    相对的 worker 路径不受影响：它是相对文档 URL 解析的。 */
-var PYTHON_FILES = ["/pixel_redraw.py", "/pixel_palettes.py", "/pixel_pipeline.py"];
+var PYTHON_FILES = [
+  "/pixel_redraw.py",
+  "/pixel_palettes.py",
+  "/pixel_pipeline.py",
+  "/pixel_color.py",
+  "/pixel_reduce.py"
+];
 
 /* 冷启动要下约 7.5MB，分步显示比一个不动的「加载中」诚实得多。 */
 export var BOOT_STEP_TEXT = {
@@ -232,19 +238,67 @@ function onDone(envelope) {
 
 /* ---------------- 一次运行 ---------------- */
 
-function baseRequest(pixelizeOnly, preserveClusters) {
-  return {
+/* 开发者配置读取：支持控制台 window.setPixelDevConfig、sessionStorage 或 URL query params */
+function getDevConfig() {
+  var dev = {};
+  try {
+    var stored = sessionStorage.getItem("pixel_dev_config");
+    if (stored) Object.assign(dev, JSON.parse(stored));
+  } catch (e) {}
+  if (typeof window !== "undefined") {
+    if (window.__PIXEL_DEV_CONFIG__) {
+      Object.assign(dev, window.__PIXEL_DEV_CONFIG__);
+    }
+    try {
+      var params = new URLSearchParams(window.location.search);
+      var devKeys = ["align_grid", "cleanup", "hole_fill_threshold", "orphan_threshold", "cleanup_passes"];
+      for (var i = 0; i < devKeys.length; i++) {
+        var key = devKeys[i];
+        if (params.has(key)) {
+          var val = params.get(key);
+          if (val === "0" || val === "false") dev[key] = false;
+          else if (val === "1" || val === "true") dev[key] = true;
+          else if (!isNaN(Number(val))) dev[key] = Number(val);
+          else dev[key] = val;
+        }
+      }
+    } catch (e) {}
+  }
+  return Object.keys(dev).length > 0 ? dev : undefined;
+}
+
+if (typeof window !== "undefined") {
+  window.setPixelDevConfig = function (cfg) {
+    if (!cfg) {
+      sessionStorage.removeItem("pixel_dev_config");
+      delete window.__PIXEL_DEV_CONFIG__;
+      console.log("[pixel] Dev config cleared.");
+    } else {
+      sessionStorage.setItem("pixel_dev_config", JSON.stringify(cfg));
+      window.__PIXEL_DEV_CONFIG__ = cfg;
+      console.log("[pixel] Dev config set:", cfg);
+    }
+  };
+}
+
+function baseRequest(pixelizeOnly, isRepixelize) {
+  var req = {
     filename: S.uploadName,
     size: S.size,
     max_colors: S.maxColors,
     palette: paletteForRequest(),
     pixelize_only: !!pixelizeOnly,
-    preserve_clusters: !!preserveClusters,
+    is_repixelize: !!isRepixelize,
     passes: settings.passes,
     prompt: settings.prompt,
     refine_prompt: settings.refine_prompt,
     upstream: upstreamBlock()
   };
+  var dev = getDevConfig();
+  if (dev) {
+    req.reducer_config = dev;
+  }
+  return req;
 }
 
 function beginRun(request, b64) {

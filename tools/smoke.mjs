@@ -29,6 +29,8 @@ await pyodide.loadPackage(['pillow', 'numpy']);
 pyodide.FS.writeFile('/pixel_redraw.py', read('pixel_redraw.py'));
 pyodide.FS.writeFile('/pixel_palettes.py', read('pixel_palettes.py'));
 pyodide.FS.writeFile('/pixel_pipeline.py', read('pixel_pipeline.py'));
+pyodide.FS.writeFile('/pixel_color.py', read('pixel_color.py'));
+pyodide.FS.writeFile('/pixel_reduce.py', read('pixel_reduce.py'));
 pyodide.FS.mkdir('/tools');
 pyodide.FS.writeFile('/tools/digest.py', read('tools/digest.py'));
 

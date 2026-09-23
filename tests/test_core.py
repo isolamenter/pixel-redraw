@@ -112,7 +112,7 @@ class TwoPassTest(unittest.TestCase):
 
         self.assertIsNotNone(generation.outputs["draft_png"])
         with Image.open(io.BytesIO(generation.outputs["draft_png"])) as draft:
-            self.assertEqual(draft.size, (4, 4))
+            self.assertEqual(draft.size, (32, 32))
             self.assertEqual(draft.convert("RGB").getpixel((0, 0)), (255, 0, 0))
 
     def test_no_draft_when_refinement_did_not_run(self):
@@ -157,7 +157,7 @@ class LocalOnlyTest(unittest.TestCase):
         self.assertEqual(upstream.payloads, [])
         self.assertTrue(set(events) <= set(pr.STAGES_LOCAL))
         with Image.open(io.BytesIO(generation.outputs["pixel_png"])) as pixel:
-            self.assertEqual(pixel.size, (4, 4))
+            self.assertEqual(pixel.size, (16, 16))
 
     def test_model_run_without_credentials_is_a_config_error(self):
         upstream = FakeUpstream(image_response("red"))
@@ -191,10 +191,10 @@ class PaletteInvariantTest(unittest.TestCase):
 
 class NearestPaletteTest(unittest.TestCase):
     def test_ties_resolve_to_the_lowest_index(self):
-        # Equidistant from both entries, so only the tie-break decides.
-        palette = ((0, 0, 0), (10, 10, 10))
-        image = Image.new("RGB", (1, 1), (5, 5, 5))
-        self.assertEqual(pr.nearest_palette(image, palette).getpixel((0, 0)), (0, 0, 0))
+        # Two identical colors in palette guarantee distance tie, strictly resolving to index 0
+        palette = ((10, 10, 10), (10, 10, 10))
+        image = Image.new("RGB", (1, 1), (10, 10, 10))
+        self.assertEqual(pr.nearest_palette(image, palette).getpixel((0, 0)), (10, 10, 10))
 
     def test_numpy_path_matches_the_pure_loop(self):
         """The fallback is the reference implementation; the fast path must not drift."""
@@ -245,16 +245,19 @@ class ConfigTest(unittest.TestCase):
     def test_prompt_placeholders_are_filled_from_the_resolved_grid(self):
         config = pr.make_config(model="m", api_key="k", size="32x32")
         resolved = pr.configure_for_source(config, (1024, 512))
-        self.assertEqual(resolved.size, (128, 64))
-        self.assertIn("128x64", resolved.prompt)
-        self.assertIn("128x64", resolved.refine_prompt)
+        self.assertEqual(resolved.size, (32, 16))
+        self.assertIn("32x16", resolved.prompt)
+        self.assertIn("32x16", resolved.refine_prompt)
 
-    def test_density_is_not_the_output_size(self):
-        """A 64 density on a 1024px source is a 256px output, not a 64px one."""
-        config = pr.make_config(model="m", api_key="k", size="64x64")
-        resolved = pr.configure_for_source(config, (1024, 1024))
-        self.assertEqual(resolved.size, (256, 256))
-        self.assertEqual(resolved.base_size, (64, 64))
+    def test_density_defines_longest_edge(self):
+        """Per Section 5 of design doc, density defines longest edge."""
+        c32 = pr.configure_for_source(pr.make_config(model="m", api_key="k", size="32x32"), (1024, 1024))
+        self.assertEqual(c32.size, (32, 32))
+        c32_large = pr.configure_for_source(pr.make_config(model="m", api_key="k", size="32x32"), (2048, 2048))
+        self.assertEqual(c32_large.size, (32, 32))
+        c64_wide = pr.configure_for_source(pr.make_config(model="m", api_key="k", size="64x64"), (1920, 1080))
+        self.assertEqual(c64_wide.size, (64, 36))
+        self.assertEqual(c64_wide.base_size, (64, 64))
 
 
 class LimitsTest(unittest.TestCase):
@@ -389,14 +392,15 @@ class CorePurityTest(unittest.TestCase):
     )
 
     def test_core_has_no_environment_or_filesystem_access(self):
-        source = (REPO_ROOT / "pixel_redraw.py").read_text(encoding="utf-8")
-        code = "\n".join(
-            line for line in source.splitlines() if not line.lstrip().startswith("#")
-        )
-        # strip docstrings so prose about the old design does not trip the scan
-        code = re.sub(r'"""(?:.|\n)*?"""', "", code)
-        for pattern in self.FORBIDDEN:
-            self.assertIsNone(re.search(pattern, code), f"{pattern} found in the core")
+        for filename in ("pixel_redraw.py", "pixel_color.py", "pixel_reduce.py"):
+            source = (REPO_ROOT / filename).read_text(encoding="utf-8")
+            code = "\n".join(
+                line for line in source.splitlines() if not line.lstrip().startswith("#")
+            )
+            # strip docstrings so prose about the old design does not trip the scan
+            code = re.sub(r'"""(?:.|\n)*?"""', "", code)
+            for pattern in self.FORBIDDEN:
+                self.assertIsNone(re.search(pattern, code), f"{pattern} found in {filename}")
 
     def test_palettes_module_still_self_checks_against_the_core(self):
         import pixel_palettes

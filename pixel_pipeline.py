@@ -168,8 +168,10 @@ async def run_pipeline(source_b64: str, request_json: str, on_progress: Any = No
             prompt=str(request.get("prompt") or ""),
             refine_prompt=str(request.get("refine_prompt") or ""),
             passes=request.get("passes") or 2,
+            reducer_config=request.get("reducer_config"),
         )
         pixelize_only = bool(request.get("pixelize_only"))
+        is_repixelize = bool(request.get("is_repixelize"))
 
         async def call_upstream(payload: dict[str, Any]) -> dict[str, Any]:
             from pyodide.http import pyfetch  # imported here: this module must import anywhere
@@ -231,7 +233,7 @@ async def run_pipeline(source_b64: str, request_json: str, on_progress: Any = No
         generation = await pr.generate(
             config, source_bytes, call_upstream,
             pixelize_only=pixelize_only,
-            preserve_clusters=bool(request.get("preserve_clusters")),
+            is_repixelize=is_repixelize,
             emit=emit,
             input_name=str(request.get("filename") or "") or None,
         )
