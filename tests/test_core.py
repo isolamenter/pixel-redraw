@@ -251,6 +251,7 @@ class ConfigTest(unittest.TestCase):
 
     def test_density_defines_longest_edge(self):
         """Per Section 5 of design doc, density defines longest edge."""
+        self.assertEqual(pr.SIZES, (8, 16, 32, 64, 128, 256, 512))
         c32 = pr.configure_for_source(pr.make_config(model="m", api_key="k", size="32x32"), (1024, 1024))
         self.assertEqual(c32.size, (32, 32))
         c32_large = pr.configure_for_source(pr.make_config(model="m", api_key="k", size="32x32"), (2048, 2048))
@@ -258,6 +259,12 @@ class ConfigTest(unittest.TestCase):
         c64_wide = pr.configure_for_source(pr.make_config(model="m", api_key="k", size="64x64"), (1920, 1080))
         self.assertEqual(c64_wide.size, (64, 36))
         self.assertEqual(c64_wide.base_size, (64, 64))
+        c256 = pr.configure_for_source(pr.make_config(model="m", api_key="k", size="256x256"), (1024, 1024))
+        self.assertEqual(c256.size, (256, 256))
+        self.assertEqual(pr.preview_scale_for(256), 1)
+        c512 = pr.configure_for_source(pr.make_config(model="m", api_key="k", size="512x512"), (1024, 1024))
+        self.assertEqual(c512.size, (512, 512))
+        self.assertEqual(pr.preview_scale_for(512), 1)
 
 
 class LimitsTest(unittest.TestCase):

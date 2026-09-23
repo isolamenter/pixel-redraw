@@ -12,13 +12,15 @@ export var SIZE_TRUTH = {
   16: "图标级，保留主要轮廓",
   32: "角色 / 道具级",
   64: "细节较丰富，适合角色头像",
-  128: "高密度，适合保留纹理"
+  128: "高密度，适合保留纹理",
+  256: "超高密度，适合大场景 / 复杂画面",
+  512: "极高细节，适合超大场景 / 精细画幅"
 };
 
 export function renderSizes() {
   var box = $("#sizes");
   clear(box);
-  var sizes = (S.meta && S.meta.sizes) || [8, 16, 32, 64, 128];
+  var sizes = (S.meta && S.meta.sizes) || [8, 16, 32, 64, 128, 256, 512];
   sizes.forEach(function (n) {
     var id = "size-" + n;
     var lab = el("label", { for: id });

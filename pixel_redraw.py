@@ -109,7 +109,7 @@ DEFAULT_SIZE = "32x32"
 DEFAULT_SCALE = 8
 DEFAULT_MAX_COLORS = 16
 
-SIZES = (8, 16, 32, 64, 128)
+SIZES = (8, 16, 32, 64, 128, 256, 512)
 COLOR_CHOICES = (8, 12, 16, 24, 32, 48, 64)
 MAX_UPLOAD_BYTES = 12 * 1024 * 1024
 MAX_IMAGE_PIXELS = 16_000_000
@@ -382,7 +382,7 @@ def proportional_size(source_size: tuple[int, int], base_size: tuple[int, int],
                       reference: int = REFERENCE_CANVAS) -> tuple[int, int]:
     """Map a source image onto the target logical grid where the longest edge equals density.
 
-    Per Section 5 of the technical design, density (e.g. 8, 16, 32, 64, 128)
+    Per Section 5 of the technical design, density (e.g. 8, 16, 32, 64, 128, 256, 512)
     defines the logical pixel count on the longest edge while strictly
     preserving aspect ratio.
     """

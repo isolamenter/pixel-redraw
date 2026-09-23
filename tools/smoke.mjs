@@ -145,7 +145,7 @@ if (!report.pipeline_has_pixel_png) failures.push('run_pipeline returned no pixe
 if (!report.pipeline_palette_only) {
   failures.push('output escaped the pico8 preset after pipeline palette resolution');
 }
-if (report.meta_sizes?.join(',') !== '8,16,32,64,128') {
+if (report.meta_sizes?.join(',') !== '8,16,32,64,128,256,512') {
   failures.push(`unexpected meta sizes: ${report.meta_sizes}`);
 }
 const phasesSeen = progressEvents.map((event) => event.phase);

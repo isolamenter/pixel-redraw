@@ -135,14 +135,15 @@ export function setActionLink(link, url, filename, label) {
 export function applyZoom() {
   var img = $("#stage-pixel").querySelector("img");
   if (!img || !S.result || !S.result.size) return;
-  var n = S.result.size[0];
+  var w = S.result.size[0];
+  var h = S.result.size[1];
   var z = S.zoom || 1;
-  img.style.width = (n * z) + "px";
-  img.style.height = (n * z) + "px";
+  img.style.width = (w * z) + "px";
+  img.style.height = (h * z) + "px";
   /* 1:1 指的是 CSS 像素；HiDPI 屏上每个逻辑像素仍占 devicePixelRatio 个设备像素 */
-  $("#zoom-info").textContent = "逻辑 " + n + "×" + S.result.size[1] + " → 显示 " + (n * z) + "×" +
-    (S.result.size[1] * z) + " px" + (z === 1 ? "（1:1 真实尺寸）" : "（整数倍 ×" + z + "）") +
-    (n * z > 520 ? "；超出预览框，可在框内滚动" : "");
+  $("#zoom-info").textContent = "逻辑 " + w + "×" + h + " → 显示 " + (w * z) + "×" +
+    (h * z) + " px" + (z === 1 ? "（1:1 真实尺寸）" : "（整数倍 ×" + z + "）") +
+    (Math.max(w * z, h * z) > 520 ? "；超出预览框，可在框内滚动" : "");
 }
 
 export function renderResult(res) {
@@ -393,7 +394,7 @@ export function renderCopyTarget() {
   lg.setAttribute("aria-pressed", S.copyTarget === "logical" ? "true" : "false");
   /* 明确写出当前复制的是哪一份，因为两者差一个重采样 */
   $("#copy-target").textContent = S.copyTarget === "preview"
-    ? "当前复制：" + (n * scale) + "px 的 nearest 放大预览（贴到聊天工具里不会被平滑重采样）"
+    ? "当前复制：" + (n * scale) + "×" + (h * scale) + " 的 nearest 放大预览（贴到聊天工具里不会被平滑重采样）"
     : "当前复制：原始 " + n + "×" + h + "（喂素材流水线用）";
   var ok = !!(navigator.clipboard && navigator.clipboard.write && typeof ClipboardItem !== "undefined");
   if (ok && ClipboardItem.supports) {
