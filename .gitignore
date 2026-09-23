@@ -9,3 +9,4 @@ tools/pyodide-dist/
 tools/package-lock.json
 
 .DS_Store
+.env
