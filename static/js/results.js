@@ -44,9 +44,7 @@ export function normalizeResult(container) {
     grid_alignment_applied: !!report.grid_alignment_applied,
     draft_size: (r.draft_size && r.draft_size.length >= 2) ? [r.draft_size[0], r.draft_size[1]] : null,
     draft_scale: (typeof r.draft_scale === "number") ? r.draft_scale : null,
-    guide_size: (r.guide_size && r.guide_size.length >= 2) ? [r.guide_size[0], r.guide_size[1]] : null,
     urls: {
-      guide: urls.guide || null,
       draft: urls.draft || null,
       pixel: urls.pixel || null,
       preview: urls.preview || null,
@@ -207,17 +205,16 @@ export function renderResult(res) {
 export function renderIntermediate(res) {
   var wrap = $("#draft-wrap"), stage = $("#stage-draft");
   clear(stage);
-  var guideUrl = res.urls.guide || res.urls.draft;
-  if (!guideUrl) {
+  if (!res.urls.draft) {
     wrap.hidden = false;
-    stage.appendChild(el("span", { class: "stage-empty", text: "本次运行未生成参考 Guide。" }));
+    stage.appendChild(el("span", { class: "stage-empty", text: "本次运行未生成 AI 初稿。" }));
     syncAiRowLayout();
     return;
   }
   wrap.hidden = false;
   syncAiRowLayout();
-  var size = res.guide_size || res.draft_size || res.size;
-  var img = el("img", { alt: "Pass 1 自适应参考 Guide" });
+  var size = res.draft_size || res.size;
+  var img = el("img", { alt: "首轮 AI 经 Pillow 量化后的中间图" });
   if (size && size.length >= 2) {
     img.width = size[0];
     img.height = size[1];
@@ -227,13 +224,13 @@ export function renderIntermediate(res) {
   img.addEventListener("error", function () {
     wrap.hidden = false;
     clear(stage);
-    stage.appendChild(el("span", { class: "stage-empty", text: "参考 Guide 暂时无法读取。" }));
+    stage.appendChild(el("span", { class: "stage-empty", text: "AI 初稿暂时无法读取。" }));
     syncAiRowLayout();
-    addTimeline("-", "guide", "参考 Guide 取不到——保留占位区",
-      { url: guideUrl }, null, "note");
+    addTimeline("-", "draft", "中间图取不到——保留初稿占位区",
+      { url: res.urls.draft }, null, "note");
   });
   stage.appendChild(img);
-  img.src = guideUrl;
+  img.src = res.urls.draft;
   applyIntermediateZoom();
 }
 

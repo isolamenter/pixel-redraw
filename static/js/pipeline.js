@@ -205,27 +205,19 @@ function onDone(envelope) {
   } else if (S.lastResultSource !== "repixelize") {
     S.lastResultDraftB64 = null;
   }
-  if (result.guide_png) {
-    S.lastResultGuideB64 = result.guide_png;
-  } else if (S.lastResultSource !== "repixelize") {
-    S.lastResultGuideB64 = null;
-  }
   revokeResultUrls();
 
   var draftB64 = result.draft_png || (S.lastResultSource === "repixelize" ? S.lastResultDraftB64 : null);
-  var guideB64 = result.guide_png || (S.lastResultSource === "repixelize" ? S.lastResultGuideB64 : null);
 
   var urls = {
     pixel: URL.createObjectURL(b64ToBlob(result.pixel_png, "image/png")),
     preview: URL.createObjectURL(b64ToBlob(result.preview_png, "image/png")),
     raw: (result.raw_png || S.lastResultRawB64) ? URL.createObjectURL(b64ToBlob(result.raw_png || S.lastResultRawB64, result.raw_mime || "image/png")) : null,
-    draft: draftB64 ? URL.createObjectURL(b64ToBlob(draftB64, "image/png")) : null,
-    guide: guideB64 ? URL.createObjectURL(b64ToBlob(guideB64, "image/png")) : null
+    draft: draftB64 ? URL.createObjectURL(b64ToBlob(draftB64, "image/png")) : null
   };
   S.objectUrls.push(urls.pixel, urls.preview);
   if (urls.raw) S.objectUrls.push(urls.raw);
   if (urls.draft) S.objectUrls.push(urls.draft);
-  if (urls.guide) S.objectUrls.push(urls.guide);
 
   var container = {
     result: {
@@ -237,7 +229,6 @@ function onDone(envelope) {
       has_raw: !!(result.raw_png || S.lastResultRawB64),
       refinement_applied: result.refinement_applied !== undefined ? result.refinement_applied : !!draftB64,
       draft_size: result.draft_size || (draftB64 ? result.report.size : null),
-      guide_size: result.guide_size || null,
       urls: urls,
       report: result.report
     },

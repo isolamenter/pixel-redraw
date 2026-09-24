@@ -609,7 +609,7 @@ def build_reference_image(source_bytes: bytes, config: Config) -> tuple[str, str
 
 
 def build_payload(source_bytes: bytes, config: Config, draft: bytes | None = None,
-                  draft_image: Any = None, guide_b64: str | None = None) -> dict[str, Any]:
+                  draft_image: Any = None) -> dict[str, Any]:
     """Build the generateContent body for either pass.
 
     ``draft_image`` lets the caller hand in an already-pixelized draft instead of
@@ -622,11 +622,7 @@ def build_payload(source_bytes: bytes, config: Config, draft: bytes | None = Non
             config = configure_for_source(config, probe.size)
     mime_type, content = prepare_image(source_bytes)
     if draft is None:
-        if guide_b64 is not None:
-            guide_mime = "image/png"
-            guide_content = guide_b64
-        else:
-            guide_mime, guide_content = build_reference_image(source_bytes, config)
+        guide_mime, guide_content = build_reference_image(source_bytes, config)
         parts = [
             {"text": config.prompt},
             {"text": "The first image is the original source. Preserve its subject and composition."},
@@ -1057,8 +1053,6 @@ def render_outputs(raw: bytes, pixel_image: Any, config: Config, *,
                    refinement_applied: bool = False,
                    input_name: str | None = None,
                    draft_png: bytes | None = None,
-                   guide_png: bytes | None = None,
-                   guide_size: tuple[int, int] | None = None,
                    reduction: pixel_reduce.ReductionResult | None = None) -> dict[str, Any]:
     """Turn the run into downloadable bytes plus a report.
 
@@ -1114,8 +1108,6 @@ def render_outputs(raw: bytes, pixel_image: Any, config: Config, *,
         # The intermediate the page can show between the two passes, when there
         # was a second pass at all.
         "draft_png": draft_png,
-        "guide_png": guide_png,
-        "guide_size": list(guide_size) if guide_size else None,
         "report": report,
     }
 
@@ -1318,8 +1310,6 @@ async def generate(
 
     refinement_applied = False
     draft_png = None
-    guide_png = None
-    guide_size = None
     if pixelize_only:
         raw = source_bytes
     else:
@@ -1327,20 +1317,8 @@ async def generate(
 
         config_pass1 = derive_pass1_config(config, source_size) if config.passes == 2 else config
 
-        Image, ImageOps, _ = require_pillow()
-        with Image.open(io.BytesIO(source_bytes)) as source_img:
-            frame = ImageOps.exif_transpose(source_img).convert("RGBA")
-        guide_logical = reduce_photo(frame, config_pass1).image
-        guide_png = _png_bytes(guide_logical)
-        guide_size = (guide_logical.width, guide_logical.height)
-
-        guide_expanded = guide_logical.resize(frame.size, Image.Resampling.NEAREST)
-        guide_buffer = io.BytesIO()
-        guide_expanded.save(guide_buffer, "PNG")
-        guide_content = base64.b64encode(guide_buffer.getvalue()).decode("ascii")
-
         announce("upstream_wait", "正在调用模型", f"{config_pass1.model} @ {safe_host(config_pass1.base_url)}")
-        response = await call_upstream(build_payload(source_bytes, config_pass1, guide_b64=guide_content))
+        response = await call_upstream(build_payload(source_bytes, config_pass1))
         announce("upstream_response", "模型已返回", "")
 
         announce("extract_start", "正在解析模型输出", "")
@@ -1392,8 +1370,6 @@ async def generate(
         refinement_applied=refinement_applied,
         input_name=input_name,
         draft_png=draft_png,
-        guide_png=guide_png,
-        guide_size=guide_size,
         reduction=reduction,
     )
 

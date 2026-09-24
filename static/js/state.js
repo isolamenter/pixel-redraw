@@ -35,7 +35,6 @@ export var S = {
 
   lastResultRawB64: null,  // 模型原始输出，供「改尺寸/换调色板」零成本重渲染
   lastResultDraftB64: null, // 首轮量化中间草稿，重渲染时保留展示
-  lastResultGuideB64: null, // Pass 1 自适应参考 Guide
   lastResultSource: null,  // 'generate' | 'repixelize'
   result: null,
 
