@@ -93,6 +93,33 @@ def target_grid(source_size: tuple[int, int], density: int, reference: int = 256
     )
 
 
+def adaptive_max_colors(density_or_size: int | tuple[int, int] | None) -> int:
+    """Choose an optimal auto palette size based on pixel density.
+
+    - >= 128: 64 colors
+    - 64 ~ 127: 48 colors
+    - 32 ~ 63: 32 colors
+    - 16 ~ 31: 16 colors
+    - < 16: 8 colors
+    """
+    if density_or_size is None:
+        return 32
+    if isinstance(density_or_size, (tuple, list)):
+        d = max(density_or_size[0], density_or_size[1]) if len(density_or_size) >= 2 else density_or_size[0]
+    else:
+        d = int(density_or_size)
+    if d >= 128:
+        return 64
+    elif d >= 64:
+        return 48
+    elif d >= 32:
+        return 32
+    elif d >= 16:
+        return 16
+    else:
+        return 8
+
+
 # --------------------------------------------------------------------------
 # Section 6: Grid Phase Alignment
 # --------------------------------------------------------------------------
@@ -391,9 +418,14 @@ def reduce_pixel_art(
                 opaque_pixels, resolved_palette, max_colors
             )
     else:
+        auto_k = (
+            max_colors
+            if isinstance(max_colors, int) and max_colors > 0
+            else adaptive_max_colors(density or resolved_size)
+        )
         resolved_palette = pixel_color.build_auto_palette(
             opaque_pixels,
-            max_colors=max_colors if isinstance(max_colors, int) and max_colors > 0 else 16,
+            max_colors=auto_k,
             seed=config.kmeans_seed,
             max_samples=config.kmeans_max_samples,
             iterations=config.kmeans_iterations,
@@ -447,7 +479,7 @@ def reduce_photo(
     target_size: tuple[int, int] | None = None,
     density: int | None = None,
     palette: Sequence[tuple[int, int, int]] | None = None,
-    max_colors: int | None = 16,
+    max_colors: int | None = None,
     config: ReducerConfig = DEFAULT_REDUCER_CONFIG,
 ) -> ReductionResult:
     """Downsampling & reduction for natural user photos (Local Pixelize-Only).
@@ -485,9 +517,14 @@ def reduce_photo(
                 opaque_pixels, resolved_palette, max_colors
             )
     else:
+        auto_k = (
+            max_colors
+            if isinstance(max_colors, int) and max_colors > 0
+            else adaptive_max_colors(density or resolved_size)
+        )
         resolved_palette = pixel_color.build_auto_palette(
             opaque_pixels,
-            max_colors=max_colors if isinstance(max_colors, int) and max_colors > 0 else 16,
+            max_colors=auto_k,
             seed=config.kmeans_seed,
             max_samples=config.kmeans_max_samples,
             iterations=config.kmeans_iterations,

@@ -302,7 +302,7 @@ def make_config(
         raise ConfigError(f"Preview scale must be between 1 and 32, got {scale}")
 
     if max_colors is None or max_colors == "" or max_colors == 0:
-        resolved_max_colors = None if colors is not None else DEFAULT_MAX_COLORS
+        resolved_max_colors = None
     else:
         try:
             mc_int = int(max_colors)
@@ -385,6 +385,7 @@ def parse_size(value: Any) -> tuple[int, int]:
 
 
 target_grid = pixel_reduce.target_grid
+adaptive_max_colors = pixel_reduce.adaptive_max_colors
 
 
 def proportional_size(source_size: tuple[int, int], base_size: tuple[int, int],
@@ -554,6 +555,7 @@ def reduce_photo(content: Any, config: Config) -> pixel_reduce.ReductionResult:
     return pixel_reduce.reduce_photo(
         content,
         target_size=config.size,
+        density=config.base_size[0] if config.base_size else None,
         palette=config.palette,
         max_colors=config.max_colors,
         config=config.reducer_config,
@@ -565,6 +567,7 @@ def reduce_model_pixel_art(content: Any, config: Config) -> pixel_reduce.Reducti
     return pixel_reduce.reduce_pixel_art(
         content,
         target_size=config.size,
+        density=config.base_size[0] if config.base_size else None,
         palette=config.palette,
         max_colors=config.max_colors,
         config=config.reducer_config,
@@ -574,10 +577,12 @@ def reduce_model_pixel_art(content: Any, config: Config) -> pixel_reduce.Reducti
 def _pixelize_frame(source: Any, config: Config, size: tuple[int, int],
                     preserve_clusters: bool = False) -> Any:
     """Backwards-compatible helper: resize and quantize frame using pixel_reduce."""
+    density = config.base_size[0] if config.base_size else None
     if preserve_clusters:
         return pixel_reduce.reduce_pixel_art(
             source,
             target_size=size,
+            density=density,
             palette=config.palette,
             max_colors=config.max_colors,
             config=config.reducer_config,
@@ -585,6 +590,7 @@ def _pixelize_frame(source: Any, config: Config, size: tuple[int, int],
     return pixel_reduce.reduce_photo(
         source,
         target_size=size,
+        density=density,
         palette=config.palette,
         max_colors=config.max_colors,
         config=config.reducer_config,

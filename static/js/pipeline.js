@@ -293,7 +293,7 @@ if (typeof window !== "undefined") {
 function baseRequest(pixelizeOnly, isRepixelize) {
   var maxColors = null;
   if (S.paletteMode === "auto") {
-    maxColors = S.maxColors || 16;
+    maxColors = null;
   } else if (S.maxColorsMode === "custom" && S.maxColorsLimit) {
     maxColors = S.maxColorsLimit;
   }

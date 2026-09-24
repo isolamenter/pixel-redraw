@@ -175,7 +175,7 @@ export function updateMaxColorsStatus() {
   var st = $("#max-colors-status");
   if (!st) return;
   if (S.paletteMode === "auto") {
-    st.textContent = "Auto 模式下由算法自动提取色板";
+    st.textContent = "Auto 模式下根据像素密度自适应提取色板";
     return;
   }
   if (S.maxColorsMode === "all") {

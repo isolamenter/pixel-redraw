@@ -124,6 +124,34 @@ class PaletteOklabTest(unittest.TestCase):
         for c in res.palette:
             self.assertIn(c, palette)
 
+    def test_adaptive_max_colors_mapping(self):
+        self.assertEqual(pixel_reduce.adaptive_max_colors(8), 8)
+        self.assertEqual(pixel_reduce.adaptive_max_colors(16), 16)
+        self.assertEqual(pixel_reduce.adaptive_max_colors(32), 32)
+        self.assertEqual(pixel_reduce.adaptive_max_colors(64), 48)
+        self.assertEqual(pixel_reduce.adaptive_max_colors(128), 64)
+        self.assertEqual(pixel_reduce.adaptive_max_colors((64, 64)), 48)
+        self.assertEqual(pixel_reduce.adaptive_max_colors((128, 64)), 64)
+
+    def test_reduce_with_density_adaptive_colors(self):
+        # Create random noisy image with 256 unique colors
+        arr = np.random.RandomState(42).randint(0, 256, size=(128, 128, 4), dtype=np.uint8)
+        arr[..., 3] = 255
+        img = Image.fromarray(arr, mode="RGBA")
+
+        # density 16 -> auto max colors 16
+        res16 = pixel_reduce.reduce_photo(img, density=16)
+        self.assertLessEqual(len(res16.palette), 16)
+
+        # density 32 -> auto max colors 32
+        res32 = pixel_reduce.reduce_photo(img, density=32)
+        self.assertLessEqual(len(res32.palette), 32)
+        self.assertGreater(len(res32.palette), 16)
+
+        # density 64 -> auto max colors 48
+        res64 = pixel_reduce.reduce_photo(img, density=64)
+        self.assertLessEqual(len(res64.palette), 48)
+        self.assertGreater(len(res64.palette), 32)
 
 
 class QVoteTest(unittest.TestCase):
