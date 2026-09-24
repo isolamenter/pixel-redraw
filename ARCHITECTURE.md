@@ -58,7 +58,7 @@ flowchart TD
 | | [`pixel_pipeline.py`](file:///Users/akiya/Project/pixel/pixel_pipeline.py) | **唯一的 Pyodide 适配模块**。提供 `web_meta()` 和 `run_pipeline()` 接口，使用 `pyodide.http.pyfetch` 进行网络传输，包装脱敏错误信封。 | 依赖 `pixel_redraw.py`, `pixel_palettes.py`, `pyodide` |
 | **纯计算核心层** | [`pixel_redraw.py`](file:///Users/akiya/Project/pixel/pixel_redraw.py) | **纯计算**。Gemini 请求 payload 组装、响应解析、两轮生成流程编排、调色板子集断言。 | 依赖 `pixel_reduce.py`, `pixel_palettes.py`, `pixel_color.py` |
 | | [`pixel_reduce.py`](file:///Users/akiya/Project/pixel/pixel_reduce.py) | **纯计算**。目标网格计算、网格相位微移对齐 (Grid Phase Alignment)、QVote (Quantize-then-Vote) 区域多数表决量化、置信度拓扑清理。 | 依赖 `pixel_color.py`, `PIL.Image`, `numpy` |
-| | [`pixel_color.py`](file:///Users/akiya/Project/pixel/pixel_color.py) | **纯计算**。`sRGB` $\leftrightarrow$ `Linear RGB` $\leftrightarrow$ `Oklab` 感知色彩转换、Oklab 最近色映射、确定性 K-Means 自动调色板生成。 | 依赖 `numpy` |
+| | [`pixel_color.py`](file:///Users/akiya/Project/pixel/pixel_color.py) | **纯计算**。`sRGB` $\leftrightarrow$ `Linear RGB` $\leftrightarrow$ `Oklab` 感知色彩转换、Oklab 最近色映射、确定性 K-Means 自动调色板生成、加权感知误差贪心剪枝子集提取 (`select_sub_palette`)。 | 依赖 `numpy` |
 | | [`pixel_palettes.py`](file:///Users/akiya/Project/pixel/pixel_palettes.py) | 15 个硬件与艺术预设调色板数据及启动时自检。 | 依赖 `pixel_redraw.py` (仅用于语法自检) |
 | **基础设施与工具** | [`deploy/nginx.conf`](file:///Users/akiya/Project/pixel/deploy/nginx.conf) / [`Dockerfile`](file:///Users/akiya/Project/pixel/Dockerfile) | 静态站部署，配置 `.wasm` / `.mjs` MIME 类型。 | 纯静态分发 |
 | | [`tools/serve.mjs`](file:///Users/akiya/Project/pixel/tools/serve.mjs) / [`tools/linkcheck.mjs`](file:///Users/akiya/Project/pixel/tools/linkcheck.mjs) | 本地开发服务器（带 `no-store` 防止缓存）及静态链接检查。 | Node.js 运行环境 |

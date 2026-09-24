@@ -70,6 +70,7 @@
 ### 3.4 感知色彩空间与调色板 (Oklab & Palette)
 - **颜色空间**：所有色差比较与 K-Means 聚类均在 Oklab 感知色彩空间进行（`sRGB` $\leftrightarrow$ `Linear RGB` $\leftrightarrow$ `Oklab`）。
 - **固定调色板**：用户选择内置预设（15 款硬件/艺术调色板）或自定义 HEX 调色板时，最近色映射在平局时严格选取索引较低的颜色（保证确定性）。
+- **调色板子集约束 (Max Colors & Greedy Pruning)**：当指定调色板且设定了最大颜色数量 $K$（$K < M$）时，算法执行加权感知误差贪心剪枝（`select_sub_palette`），根据像素使用频次权重迭代合并感知误差增加最小的颜色，精准提取 $K$ 色子集，且保证平局裁决顺序与子集不变量。
 - **自动调色板 (Auto Palette)**：在 Oklab 空间执行轻量、确定性（固定随机种子）的 K-Means 聚类，提取 $K$ 种最具代表性的颜色。
 
 ### 3.5 像素拓扑与孤立像素清理 (Topology Cleanup)
