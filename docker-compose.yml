@@ -10,6 +10,7 @@ services:
     container_name: pixel-redraw
     ports:
       - "8080:80"
+      - "8443:443"
     restart: unless-stopped
     # 容器内无状态，给它一个只读根并禁掉提权：万一 nginx 被攻破也写不了东西。
     read_only: true

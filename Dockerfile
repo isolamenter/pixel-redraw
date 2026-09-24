@@ -2,6 +2,16 @@
 # Pyodide WASM 运行时与 Python 核心源码已内置于镜像内，无需外网 CDN。
 FROM nginx:1.27-alpine
 
+RUN apk add --no-cache openssl && \
+    mkdir -p /etc/nginx/ssl && \
+    openssl req -x509 -newkey rsa:2048 -nodes \
+      -keyout /etc/nginx/ssl/key.pem \
+      -out /etc/nginx/ssl/cert.pem \
+      -days 3650 \
+      -subj "/CN=pixel-redraw" \
+      -addext "subjectAltName=IP:192.168.1.186,IP:192.168.1.36,IP:127.0.0.1,DNS:localhost" && \
+    apk del openssl
+
 COPY deploy/nginx.conf /etc/nginx/conf.d/default.conf
 
 # 前端：index.html + app.css + js/
@@ -16,4 +26,4 @@ COPY pixel_redraw.py pixel_palettes.py pixel_pipeline.py pixel_color.py pixel_re
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
   CMD wget -q -O /dev/null http://127.0.0.1/ || exit 1
 
-EXPOSE 80
+EXPOSE 80 443
