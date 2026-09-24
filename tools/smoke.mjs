@@ -134,8 +134,8 @@ if (!report.nearest_palette_fast_path_matches_loop) {
 if (!report.auto_mediancut?.sha256) failures.push('MEDIANCUT produced nothing');
 if (!report.fixed_palette?.sha256) failures.push('fixed-palette path produced nothing');
 
-// The output grid longest edge matches requested density (16x16).
-if (report.auto_mediancut?.size?.join('x') !== '16x16') {
+// The output grid is density-relative: 16/256 of a 64px source is 4x4.
+if (report.auto_mediancut?.size?.join('x') !== '4x4') {
   failures.push(`unexpected output size ${report.auto_mediancut?.size}`);
 }
 
@@ -145,7 +145,7 @@ if (!report.pipeline_has_pixel_png) failures.push('run_pipeline returned no pixe
 if (!report.pipeline_palette_only) {
   failures.push('output escaped the pico8 preset after pipeline palette resolution');
 }
-if (report.meta_sizes?.join(',') !== '8,16,32,64,128,256,512') {
+if (report.meta_sizes?.join(',') !== '8,16,32,64,128') {
   failures.push(`unexpected meta sizes: ${report.meta_sizes}`);
 }
 const phasesSeen = progressEvents.map((event) => event.phase);

@@ -153,7 +153,8 @@ logical_width = source_width * density / 256
 
 同一个 density 会因为输入分辨率不同产生不同像素艺术尺度。
 
-这会让高分辨率输入保留过多 AI 高频细节。
+> [!NOTE] 架构演进说明 (2026-09-24)
+> 初稿曾尝试将 Density 改造为“最长边绝对尺寸”，但该实验性方案会导致颗粒度失控及超大分辨率风险。最终系统正式确立并保留了 **256px 参考画布比例映射模型**，确立 Density 控制视觉颗粒度而非绝对分辨率。详见规范文档 [docs/specs/pixel-reduction-pipeline.md](file:///Users/akiya/Project/pixel/docs/specs/pixel-reduction-pipeline.md) 与架构决策 [docs/decisions/0005-reference-canvas-density-mapping.md](file:///Users/akiya/Project/pixel/docs/decisions/0005-reference-canvas-density-mapping.md)。
 
 ---
 
@@ -213,7 +214,11 @@ Final Output
 
 ## 5. Logical Grid 定义
 
-### 5.1 新语义
+> [!NOTE] 架构演进说明 (2026-09-24)
+> **状态更替**：本节初稿提出的“最长边固定像素数 (Longest-edge)”定义在实践中已被正式废弃，由 **256px 参考画布比例映射 (Reference Canvas Mapping)** 取代。
+> 实际生效规范与计算公式请参见规范文档 [docs/specs/pixel-reduction-pipeline.md](file:///Users/akiya/Project/pixel/docs/specs/pixel-reduction-pipeline.md#31-目标网格与分辨率计算-target-grid) 及决策记录 [docs/decisions/0005-reference-canvas-density-mapping.md](file:///Users/akiya/Project/pixel/docs/decisions/0005-reference-canvas-density-mapping.md)。以下 5.1 ~ 5.3 节内容仅作为初期设计草案历史记录保留。
+
+### 5.1 新语义 (历史草案)
 
 UI 中的：
 

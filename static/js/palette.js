@@ -8,19 +8,17 @@ import { scheduleRepixelize } from './pipeline.js';
 import { applyDefaultZoom } from './results.js';
 
 export var SIZE_TRUTH = {
-  8: "极限抽象，适合图标 / 表情",
-  16: "图标级，保留主要轮廓",
-  32: "角色 / 道具级",
-  64: "细节较丰富，适合角色头像",
-  128: "高密度，适合保留纹理",
-  256: "超高密度，适合大场景 / 复杂画面",
-  512: "极高细节，适合超大场景 / 精细画幅"
+  8: "极限抽象，适合微图标 / 表情",
+  16: "经典复古，适合图标 / 道具",
+  32: "角色 / 道具级（黄金尺寸）",
+  64: "细节较丰富，适合角色头像 / 场景",
+  128: "高密度，适合复杂画幅 / 纹理"
 };
 
 export function renderSizes() {
   var box = $("#sizes");
   clear(box);
-  var sizes = (S.meta && S.meta.sizes) || [8, 16, 32, 64, 128, 256, 512];
+  var sizes = (S.meta && S.meta.sizes) || [8, 16, 32, 64, 128];
   sizes.forEach(function (n) {
     var id = "size-" + n;
     var lab = el("label", { for: id });

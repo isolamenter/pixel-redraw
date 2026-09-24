@@ -109,7 +109,7 @@ DEFAULT_SIZE = "32x32"
 DEFAULT_SCALE = 8
 DEFAULT_MAX_COLORS = 16
 
-SIZES = (8, 16, 32, 64, 128, 256, 512)
+SIZES = (8, 16, 32, 64, 128)
 COLOR_CHOICES = (8, 12, 16, 24, 32, 48, 64)
 MAX_UPLOAD_BYTES = 12 * 1024 * 1024
 MAX_IMAGE_PIXELS = 16_000_000
@@ -380,20 +380,24 @@ target_grid = pixel_reduce.target_grid
 
 def proportional_size(source_size: tuple[int, int], base_size: tuple[int, int],
                       reference: int = REFERENCE_CANVAS) -> tuple[int, int]:
-    """Map a source image onto the target logical grid where the longest edge equals density.
+    """Map a source image onto a density measured on a reference canvas.
 
-    Per Section 5 of the technical design, density (e.g. 8, 16, 32, 64, 128, 256, 512)
-    defines the logical pixel count on the longest edge while strictly
-    preserving aspect ratio.
+    A 256x256 source at density 64 becomes 64x64. A 1024x1024 source at the
+    same density becomes 256x256. Width and height are scaled independently by
+    the same reference, so non-square images keep their aspect ratio.
     """
+    if reference < 1:
+        raise SizeError("Reference canvas must be positive")
     source_width, source_height = source_size
     base_width, base_height = base_size
     if source_width < 1 or source_height < 1:
         raise SizeError("Source image dimensions must be positive")
     if base_width < 1 or base_height < 1:
         raise SizeError("Base density must be positive")
-    density = max(base_width, base_height)
-    return pixel_reduce.target_grid(source_size, density)
+    return (
+        max(1, int(round(source_width * base_width / reference))),
+        max(1, int(round(source_height * base_height / reference))),
+    )
 
 
 def configure_for_source(config: Config, source_size: tuple[int, int]) -> Config:

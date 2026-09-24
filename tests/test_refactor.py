@@ -2,7 +2,7 @@
 
 Covers all requirements from Section 18 of pixel-redraw-refactor-design.md:
 - 18.1 Unit Tests:
-  - Target Grid (longest edge semantics)
+  - Target Grid (proportional to 256 reference canvas)
   - Palette (Oklab mapping, auto-palette determinism, alpha isolation)
   - QVote (majority vote, tie-breaking, alpha handling)
   - Topology Cleanup (hole fill, orphan removal, cluster preservation)
@@ -25,17 +25,17 @@ import pixel_redraw as pr
 
 
 class GridTest(unittest.TestCase):
-    def test_longest_edge_grid(self):
-        # 1024x1024 + 32 -> 32x32
-        self.assertEqual(pixel_reduce.target_grid((1024, 1024), 32), (32, 32))
-        # 2048x2048 + 32 -> 32x32
-        self.assertEqual(pixel_reduce.target_grid((2048, 2048), 32), (32, 32))
-        # 1920x1080 + 64 -> 64x36
-        self.assertEqual(pixel_reduce.target_grid((1920, 1080), 64), (64, 36))
-        # 1080x1920 + 64 -> 36x64 (portrait)
-        self.assertEqual(pixel_reduce.target_grid((1080, 1920), 64), (36, 64))
-        # 3840x2160 + 64 -> 64x36
-        self.assertEqual(pixel_reduce.target_grid((3840, 2160), 64), (64, 36))
+    def test_reference_proportional_grid(self):
+        # (256, 256) @ 32 -> (32, 32)
+        self.assertEqual(pixel_reduce.target_grid((256, 256), 32), (32, 32))
+        # (1024, 1024) @ 32 -> (128, 128)
+        self.assertEqual(pixel_reduce.target_grid((1024, 1024), 32), (128, 128))
+        # (1920, 1080) @ 64 -> (480, 270)
+        self.assertEqual(pixel_reduce.target_grid((1920, 1080), 64), (480, 270))
+        # (1080, 1920) @ 64 -> (270, 480) (portrait)
+        self.assertEqual(pixel_reduce.target_grid((1080, 1920), 64), (270, 480))
+        # (512, 256) @ 16 -> (32, 16)
+        self.assertEqual(pixel_reduce.target_grid((512, 256), 16), (32, 16))
 
 
 class PaletteOklabTest(unittest.TestCase):

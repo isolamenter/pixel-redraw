@@ -112,7 +112,7 @@ class TwoPassTest(unittest.TestCase):
 
         self.assertIsNotNone(generation.outputs["draft_png"])
         with Image.open(io.BytesIO(generation.outputs["draft_png"])) as draft:
-            self.assertEqual(draft.size, (32, 32))
+            self.assertEqual(draft.size, (4, 4))
             self.assertEqual(draft.convert("RGB").getpixel((0, 0)), (255, 0, 0))
 
     def test_no_draft_when_refinement_did_not_run(self):
@@ -157,7 +157,7 @@ class LocalOnlyTest(unittest.TestCase):
         self.assertEqual(upstream.payloads, [])
         self.assertTrue(set(events) <= set(pr.STAGES_LOCAL))
         with Image.open(io.BytesIO(generation.outputs["pixel_png"])) as pixel:
-            self.assertEqual(pixel.size, (16, 16))
+            self.assertEqual(pixel.size, (4, 4))
 
     def test_model_run_without_credentials_is_a_config_error(self):
         upstream = FakeUpstream(image_response("red"))
@@ -245,26 +245,23 @@ class ConfigTest(unittest.TestCase):
     def test_prompt_placeholders_are_filled_from_the_resolved_grid(self):
         config = pr.make_config(model="m", api_key="k", size="32x32")
         resolved = pr.configure_for_source(config, (1024, 512))
-        self.assertEqual(resolved.size, (32, 16))
-        self.assertIn("32x16", resolved.prompt)
-        self.assertIn("32x16", resolved.refine_prompt)
+        self.assertEqual(resolved.size, (128, 64))
+        self.assertIn("128x64", resolved.prompt)
+        self.assertIn("128x64", resolved.refine_prompt)
 
-    def test_density_defines_longest_edge(self):
-        """Per Section 5 of design doc, density defines longest edge."""
-        self.assertEqual(pr.SIZES, (8, 16, 32, 64, 128, 256, 512))
-        c32 = pr.configure_for_source(pr.make_config(model="m", api_key="k", size="32x32"), (1024, 1024))
-        self.assertEqual(c32.size, (32, 32))
-        c32_large = pr.configure_for_source(pr.make_config(model="m", api_key="k", size="32x32"), (2048, 2048))
-        self.assertEqual(c32_large.size, (32, 32))
-        c64_wide = pr.configure_for_source(pr.make_config(model="m", api_key="k", size="64x64"), (1920, 1080))
-        self.assertEqual(c64_wide.size, (64, 36))
-        self.assertEqual(c64_wide.base_size, (64, 64))
-        c256 = pr.configure_for_source(pr.make_config(model="m", api_key="k", size="256x256"), (1024, 1024))
-        self.assertEqual(c256.size, (256, 256))
-        self.assertEqual(pr.preview_scale_for(256), 1)
-        c512 = pr.configure_for_source(pr.make_config(model="m", api_key="k", size="512x512"), (1024, 1024))
-        self.assertEqual(c512.size, (512, 512))
-        self.assertEqual(pr.preview_scale_for(512), 1)
+    def test_density_is_proportional_to_reference_canvas(self):
+        self.assertEqual(pr.SIZES, (8, 16, 32, 64, 128))
+        c256_32 = pr.configure_for_source(pr.make_config(model="m", api_key="k", size="32x32"), (256, 256))
+        self.assertEqual(c256_32.size, (32, 32))
+        c1024_32 = pr.configure_for_source(pr.make_config(model="m", api_key="k", size="32x32"), (1024, 1024))
+        self.assertEqual(c1024_32.size, (128, 128))
+        c1024_64 = pr.configure_for_source(pr.make_config(model="m", api_key="k", size="64x64"), (1024, 1024))
+        self.assertEqual(c1024_64.size, (256, 256))
+        self.assertEqual(c1024_64.base_size, (64, 64))
+        c1920_64 = pr.configure_for_source(pr.make_config(model="m", api_key="k", size="64x64"), (1920, 1080))
+        self.assertEqual(c1920_64.size, (480, 270))
+        c1024_512_32 = pr.configure_for_source(pr.make_config(model="m", api_key="k", size="32x32"), (1024, 512))
+        self.assertEqual(c1024_512_32.size, (128, 64))
 
 
 class LimitsTest(unittest.TestCase):

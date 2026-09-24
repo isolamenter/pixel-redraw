@@ -77,19 +77,20 @@ class ReductionResult:
 # --------------------------------------------------------------------------
 
 
-def target_grid(source_size: tuple[int, int], density: int) -> tuple[int, int]:
-    """Calculate target logical canvas dimensions given source size and density.
+def target_grid(source_size: tuple[int, int], density: int, reference: int = 256) -> tuple[int, int]:
+    """Calculate target logical canvas dimensions based on a reference canvas.
 
-    Density specifies the number of logical pixels on the LONGEST edge.
-    Aspect ratio is strictly preserved.
+    A 256x256 source at density 64 becomes 64x64. A 1024x1024 source at the
+    same density becomes 256x256. Width and height are scaled independently by
+    the same reference, so non-square images keep their aspect ratio.
     """
     width, height = source_size
-    if width < 1 or height < 1 or density < 1:
-        raise ValueError("Dimensions and density must be positive")
-
-    if width >= height:
-        return (density, max(1, int(round(height / width * density))))
-    return (max(1, int(round(width / height * density))), density)
+    if width < 1 or height < 1 or density < 1 or reference < 1:
+        raise ValueError("Dimensions, density and reference must be positive")
+    return (
+        max(1, int(round(width * density / reference))),
+        max(1, int(round(height * density / reference))),
+    )
 
 
 # --------------------------------------------------------------------------
