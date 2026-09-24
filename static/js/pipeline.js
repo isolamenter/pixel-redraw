@@ -291,10 +291,16 @@ if (typeof window !== "undefined") {
 }
 
 function baseRequest(pixelizeOnly, isRepixelize) {
+  var maxColors = null;
+  if (S.paletteMode === "auto") {
+    maxColors = S.maxColors || 16;
+  } else if (S.maxColorsMode === "custom" && S.maxColorsLimit) {
+    maxColors = S.maxColorsLimit;
+  }
   var req = {
     filename: S.uploadName,
     size: S.size,
-    max_colors: S.maxColors,
+    max_colors: maxColors,
     palette: paletteForRequest(),
     pixelize_only: !!pixelizeOnly,
     is_repixelize: !!isRepixelize,

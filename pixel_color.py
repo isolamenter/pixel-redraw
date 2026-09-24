@@ -245,3 +245,91 @@ def build_auto_palette(
         unique_list.append((0, 0, 0))
 
     return tuple(unique_list)
+
+
+# --------------------------------------------------------------------------
+# Palette subset selection (Weighted Oklab Error Greedy Pruning)
+# --------------------------------------------------------------------------
+
+
+def select_sub_palette(
+    rgb_samples: np.ndarray,
+    palette: Sequence[tuple[int, int, int]],
+    max_colors: int,
+) -> tuple[tuple[int, int, int], ...]:
+    """Deterministically select the optimal subset of up to `max_colors` from `palette`.
+
+    Uses weighted perceptual error greedy pruning in Oklab space:
+    1. Maps opaque sample pixels to the full palette and computes usage counts.
+    2. Filters to active palette colors. If active count <= max_colors, returns
+       the active colors preserving the original palette ordering.
+    3. If active count > max_colors, iteratively merges the color whose removal
+       causes the smallest weighted squared Oklab distance increase to its
+       closest surviving neighbor, until exactly max_colors remain.
+    4. Guarantees output is a strict subset of `palette`, maintaining original
+       palette index order (preserving tie-breaking stability).
+    """
+    if max_colors < 1:
+        raise ValueError("max_colors must be positive")
+    if len(palette) == 0:
+        raise ValueError("palette must contain at least one color")
+    if len(palette) <= max_colors:
+        return tuple(tuple(int(c) for c in color) for color in palette)
+
+    flat = np.asarray(rgb_samples, dtype=np.uint8).reshape(-1, 3)
+    if flat.shape[0] == 0:
+        return tuple(tuple(int(c) for c in color) for color in palette[:max_colors])
+
+    # Initial mapping to full palette
+    labels = map_to_palette(flat, palette)
+    counts = np.bincount(labels, minlength=len(palette))
+    active_indices = np.where(counts > 0)[0].tolist()
+
+    if len(active_indices) == 0:
+        return tuple(tuple(int(c) for c in color) for color in palette[:max_colors])
+
+    if len(active_indices) <= max_colors:
+        # Fewer active colors than max_colors, return active subset preserving original order
+        return tuple(tuple(int(c) for c in palette[idx]) for idx in active_indices)
+
+    # Convert all palette colors to Oklab
+    palette_srgb = np.asarray(palette, dtype=np.uint8)
+    palette_oklab = srgb_to_oklab(palette_srgb)
+
+    weights = {idx: float(counts[idx]) for idx in active_indices}
+    current_active = list(active_indices)
+
+    while len(current_active) > max_colors:
+        best_delta = float("inf")
+        best_idx_to_remove = -1
+        best_target_neighbor = -1
+
+        for i_idx, cand in enumerate(current_active):
+            cand_lab = palette_oklab[cand]
+            w = weights[cand]
+
+            # Find closest remaining active neighbor
+            min_dist_sq = float("inf")
+            closest_neighbor = -1
+            for j_idx, other in enumerate(current_active):
+                if i_idx == j_idx:
+                    continue
+                diff = cand_lab - palette_oklab[other]
+                d_sq = float(np.sum(diff * diff))
+                if d_sq < min_dist_sq:
+                    min_dist_sq = d_sq
+                    closest_neighbor = other
+
+            delta_e = w * min_dist_sq
+            if delta_e < best_delta:
+                best_delta = delta_e
+                best_idx_to_remove = cand
+                best_target_neighbor = closest_neighbor
+
+        # Merge weight of removed color into its closest neighbor
+        weights[best_target_neighbor] += weights[best_idx_to_remove]
+        current_active.remove(best_idx_to_remove)
+
+    current_active.sort()
+    return tuple(tuple(int(c) for c in palette[idx]) for idx in current_active)
+

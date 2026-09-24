@@ -218,7 +218,7 @@ class Config:
     timeout: float
     size: tuple[int, int]
     scale: int
-    max_colors: int
+    max_colors: int | None
     palette: tuple[tuple[int, int, int], ...] | None
     prompt: str
     keep_raw: bool
@@ -250,7 +250,7 @@ def make_config(
     timeout: float = DEFAULT_TIMEOUT,
     size: str = DEFAULT_SIZE,
     scale: int = DEFAULT_SCALE,
-    max_colors: int = DEFAULT_MAX_COLORS,
+    max_colors: int | None = None,
     palette: str | tuple[tuple[int, int, int], ...] | None = None,
     prompt: str = "",
     refine_prompt: str = "",
@@ -300,8 +300,17 @@ def make_config(
         raise ConfigError("passes must be 1 or 2")
     if not 1 <= int(scale) <= 32:
         raise ConfigError(f"Preview scale must be between 1 and 32, got {scale}")
-    if not 2 <= int(max_colors) <= 256:
-        raise SizeError(f"Max colors must be between 2 and 256, got {max_colors}")
+
+    if max_colors is None or max_colors == "" or max_colors == 0:
+        resolved_max_colors = None if colors is not None else DEFAULT_MAX_COLORS
+    else:
+        try:
+            mc_int = int(max_colors)
+        except (ValueError, TypeError) as exc:
+            raise SizeError(f"Max colors must be an integer, got {max_colors!r}") from exc
+        if not 2 <= mc_int <= 256:
+            raise SizeError(f"Max colors must be between 2 and 256, got {max_colors}")
+        resolved_max_colors = mc_int
 
     prompt_template = prompt or DEFAULT_PROMPT
     refine_prompt_template = refine_prompt or REFINE_PROMPT
@@ -325,7 +334,7 @@ def make_config(
         timeout=timeout_value,
         size=parsed_size,
         scale=int(scale),
-        max_colors=int(max_colors),
+        max_colors=resolved_max_colors,
         palette=colors,
         prompt=_fill_prompt(prompt_template, parsed_size),
         keep_raw=bool(keep_raw),

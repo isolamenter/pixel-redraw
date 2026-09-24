@@ -10,7 +10,7 @@ import { pushError, report } from './errors.js';
 import {
   cancelBtn, describeConnection, renderStepper, setStatus, tickUI, updateGenerateEnabled,
 } from './stepper.js';
-import { renderMaxColorChoices, renderPresets, renderSizes, syncPaletteUI } from './palette.js';
+import { renderPresets, renderSizes, syncPaletteUI, wireMaxColorsControls } from './palette.js';
 import { wireImageInput } from './image.js';
 import { applyDefaultZoom, applyIntermediateZoom, applyZoom, initCopy } from './results.js';
 import {
@@ -68,7 +68,6 @@ export function applyMeta(meta) {
   }
   renderSizes();
   renderPresets();
-  renderMaxColorChoices();
   syncPaletteUI();
   applyDefaultZoom();
   renderStepper();
@@ -98,6 +97,7 @@ function boot() {
 
   initCopy();
   wireImageInput();
+  wireMaxColorsControls();
 
   $("#generate").addEventListener("click", startGenerate);
   $("#repixelize").addEventListener("click", function () { doRepixelize("手动重新渲染"); });
@@ -127,16 +127,9 @@ function boot() {
       ? "已切到「仅本地渲染」：不调用模型，直接用本地 Pillow 像素化你上传的原图（0 成本）"
       : "已关闭「仅本地渲染」：将调用模型重绘", null, null, "note");
   });
-  $("#max-colors").addEventListener("change", function (e) {
-    var v = parseInt(e.target.value, 10);
-    if (isNaN(v)) v = 16;
-    e.target.value = String(v);
-    S.maxColors = v;
-    if (S.paletteMode !== "auto") return;
-    doRepixelize("auto 色数上限 → " + v);
-  });
   $("#custom-hex").addEventListener("input", function () {
     S.paletteMode = "custom";
+    S.preset = null;
     syncPaletteUI();
     scheduleRepixelize("自定义十六进制");   // 每次按键都会触发，所以防抖
   });

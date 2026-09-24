@@ -321,30 +321,28 @@ export function renderDownloads(res) {
 }
 
 export function renderPaletteEcho(res) {
-  var wrap = $("#pal-echo-wrap"), box = $("#pal-echo"), meta = $("#pal-echo-meta");
+  var box = $("#pal-echo"), meta = $("#pal-echo-meta");
+  if (!box || !meta) return;
   clear(box); meta.textContent = "";
   var used = res.palette_used;
   var req = res.palette_requested;
-  if ((!used || !used.length) && (!req || !req.length)) { wrap.hidden = true; return; }
-  wrap.hidden = false;
-  if (used && used.length) {
-    used.forEach(function (item) {
-      var hex = typeof item === "string" ? item : (item && (item.hex || item.color));
-      var cnt = (item && typeof item === "object") ? (item.count !== undefined ? item.count : item.pixels) : null;
-      var s = el("span", {});
-      s.appendChild(el("i", { style: "background:" + cssColor(hex), title: safeStr(hex) }));
-      s.appendChild(el("span", { text: safeStr(hex) + (cnt !== null ? " ×" + num(cnt) : "") }));
-      box.appendChild(s);
-    });
-  } else {
-    req.forEach(function (hex) {
-      var s = el("span", {});
-      s.appendChild(el("i", { style: "background:" + cssColor(hex) }));
-      s.appendChild(el("span", { text: safeStr(hex) }));
-      box.appendChild(s);
-    });
+  if (!used || !used.length) {
+    if (req && req.length) used = req;
+    else {
+      box.appendChild(el("span", { class: "dim tiny", text: "本次运行未返回固定调色板色值。" }));
+      return;
+    }
   }
+  used.forEach(function (item) {
+    var hex = typeof item === "string" ? item : (item && (item.hex || item.color));
+    var cnt = (item && typeof item === "object") ? (item.count !== undefined ? item.count : item.pixels) : null;
+    var s = el("span", {});
+    s.appendChild(el("i", { style: "background:" + cssColor(hex), title: safeStr(hex) }));
+    s.appendChild(el("span", { text: safeStr(hex) + (cnt !== null ? " ×" + num(cnt) : "") }));
+    box.appendChild(s);
+  });
   var bits = [];
+  if (used && used.length) bits.push("实际使用 " + used.length + " 色");
   if (res.reducer) bits.push("reducer=" + res.reducer);
   if (res.mean_vote_confidence !== null && res.mean_vote_confidence !== undefined) {
     bits.push("置信度=" + Math.round(res.mean_vote_confidence * 100) + "%");
@@ -353,8 +351,7 @@ export function renderPaletteEcho(res) {
   if (res.grid_alignment_applied && res.grid_offset) {
     bits.push("网格对齐=[" + res.grid_offset.join(",") + "]");
   }
-  if (res.color_count !== null) bits.push("color_count=" + res.color_count +
-    "（像素计数，不等于视觉色数，见 TECHNICAL.md §4.4）");
+  if (res.color_count !== null) bits.push("color_count=" + res.color_count + "（像素计数）");
   if (res.subset_ok !== null) bits.push("subset_ok=" + res.subset_ok);
   if (res.scale !== null) bits.push("scale=" + res.scale);
   if (res.elapsed_s !== null) bits.push("elapsed_s=" + res.elapsed_s);

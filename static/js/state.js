@@ -21,6 +21,8 @@ export var S = {
   paletteMode: "auto",     // preset | auto | custom
   preset: null,
   maxColors: 16,
+  maxColorsMode: "all",    // "all" | "custom"
+  maxColorsLimit: 8,
   pixelizeOnly: false,
 
   running: false,

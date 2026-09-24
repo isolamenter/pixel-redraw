@@ -348,7 +348,7 @@ def reduce_pixel_art(
     target_size: tuple[int, int] | None = None,
     density: int | None = None,
     palette: Sequence[tuple[int, int, int]] | None = None,
-    max_colors: int = 16,
+    max_colors: int | None = 16,
     config: ReducerConfig = DEFAULT_REDUCER_CONFIG,
 ) -> ReductionResult:
     """Unified reducer for model pixel art and repixelize passes.
@@ -382,14 +382,18 @@ def reduce_pixel_art(
         raise ValueError("Either target_size or density must be provided")
 
     # 2. Palette construction
+    opaque_mask = rgba_arr[..., 3] >= 128
+    opaque_pixels = rgba_arr[..., :3][opaque_mask]
     if palette:
         resolved_palette = tuple(tuple(int(c) for c in col) for col in palette)
+        if isinstance(max_colors, int) and 1 <= max_colors < len(resolved_palette):
+            resolved_palette = pixel_color.select_sub_palette(
+                opaque_pixels, resolved_palette, max_colors
+            )
     else:
-        opaque_mask = rgba_arr[..., 3] >= 128
-        opaque_pixels = rgba_arr[..., :3][opaque_mask]
         resolved_palette = pixel_color.build_auto_palette(
             opaque_pixels,
-            max_colors=max_colors,
+            max_colors=max_colors if isinstance(max_colors, int) and max_colors > 0 else 16,
             seed=config.kmeans_seed,
             max_samples=config.kmeans_max_samples,
             iterations=config.kmeans_iterations,
@@ -443,7 +447,7 @@ def reduce_photo(
     target_size: tuple[int, int] | None = None,
     density: int | None = None,
     palette: Sequence[tuple[int, int, int]] | None = None,
-    max_colors: int = 16,
+    max_colors: int | None = 16,
     config: ReducerConfig = DEFAULT_REDUCER_CONFIG,
 ) -> ReductionResult:
     """Downsampling & reduction for natural user photos (Local Pixelize-Only).
@@ -473,13 +477,17 @@ def reduce_photo(
     alpha = down_arr[..., 3]
     alpha_mask = alpha >= 128
 
+    opaque_pixels = rgb[alpha_mask]
     if palette:
         resolved_palette = tuple(tuple(int(c) for c in col) for col in palette)
+        if isinstance(max_colors, int) and 1 <= max_colors < len(resolved_palette):
+            resolved_palette = pixel_color.select_sub_palette(
+                opaque_pixels, resolved_palette, max_colors
+            )
     else:
-        opaque_pixels = rgb[alpha_mask]
         resolved_palette = pixel_color.build_auto_palette(
             opaque_pixels,
-            max_colors=max_colors,
+            max_colors=max_colors if isinstance(max_colors, int) and max_colors > 0 else 16,
             seed=config.kmeans_seed,
             max_samples=config.kmeans_max_samples,
             iterations=config.kmeans_iterations,

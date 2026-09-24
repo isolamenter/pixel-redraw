@@ -137,26 +137,42 @@
   <!-- ============ 调色板 ============ -->
   <section class="panel palette-panel">
     <h2>调色板 <span class="dim tiny">横向选择，色值来自运行时内置的预设表</span></h2>
+
+    <div class="custom-hex-wrap" id="custom-hex-wrap" style="margin-bottom:14px">
+      <div class="lbl2">自定义十六进制（逗号分隔，可用 #RRGGBB 或 #RGB；留空 = 自动）</div>
+      <textarea id="custom-hex" spellcheck="false" aria-label="自定义调色板十六进制列表" placeholder="如 #000000, #ffffff, #ff0000..."></textarea>
+      <div class="row-tight" style="margin-top:6px">
+        <button type="button" class="btn-sm" id="copy-palette">复制调色板（可直接粘进自定义框）</button>
+        <span class="tiny dim" id="hex-status"></span>
+      </div>
+    </div>
+
     <div class="palette-mode" id="auto-palette">
       <div id="auto-choice"></div>
-      <div class="auto-options" id="auto-options">
-        <label for="max-colors" id="max-colors-lbl" hidden>auto 色数上限</label>
-        <select id="max-colors" hidden aria-label="auto 色数上限"></select>
-        <span class="tiny dim" id="max-colors-hint" hidden>仅 auto 模式使用；固定调色板时该项被忽略。64 色适合高密度档位，不是低分辨率默认值。</span>
-      </div>
     </div>
     <div class="presets" id="presets"></div>
 
     <div id="palette-caution"></div>
 
-    <div class="lbl2" style="margin-top:12px">自定义十六进制（逗号分隔，可用 #RRGGBB 或 #RGB；留空 = 自动）</div>
-    <textarea id="custom-hex" spellcheck="false" aria-label="自定义调色板十六进制列表"></textarea>
-    <div class="row-tight" style="margin-top:6px">
-      <button type="button" class="btn-sm" id="copy-palette">复制调色板（可直接粘进自定义框）</button>
-      <span class="tiny dim" id="hex-status"></span>
+    <!-- 最大颜色数限制 -->
+    <div class="max-colors-section" id="max-colors-wrap" style="margin-top:14px">
+      <div class="lbl2">颜色数量限制 <span class="dim tiny">在所选调色板内提取最优子集（仅在预设/自定义模式下生效）</span></div>
+      <div class="row-tight" style="gap:14px; align-items:center; margin-top:6px; flex-wrap:wrap">
+        <label class="row-tight" style="gap:5px; cursor:pointer">
+          <input type="radio" name="max-colors-mode" id="max-colors-mode-all" value="all" checked>
+          <span>全部 (All)</span>
+        </label>
+        <label class="row-tight" style="gap:5px; cursor:pointer">
+          <input type="radio" name="max-colors-mode" id="max-colors-mode-custom" value="custom">
+          <span>指定数量</span>
+        </label>
+        <input type="number" id="max-colors-val" min="2" max="256" step="1" value="8" style="width:72px; padding:4px 8px; border-radius:6px; border:1px solid var(--border); background:var(--panel);" disabled aria-label="最大颜色数">
+        <span class="tiny dim" id="max-colors-status">当前：使用调色板全部颜色</span>
+      </div>
     </div>
 
-    <div id="pal-echo-wrap" hidden>
+    <!-- 独立常驻 Pal Echo -->
+    <div id="pal-echo-wrap" style="margin-top:16px; padding-top:14px; border-top:1px solid var(--border);">
       <h3>本次实际使用的调色板 <span class="dim tiny">运行时解析后回传，你看到的就是真正跑的那份</span></h3>
       <div class="pal-echo" id="pal-echo"></div>
       <div class="kv" id="pal-echo-meta"></div>

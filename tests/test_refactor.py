@@ -70,6 +70,61 @@ class PaletteOklabTest(unittest.TestCase):
         for r, g, b in res.palette:
             self.assertFalse(r == 0 and g == 255 and b == 0, "Transparent color reached palette")
 
+    def test_select_sub_palette_deterministic(self):
+        palette = (
+            (0, 0, 0), (255, 255, 255), (255, 0, 0), (0, 255, 0),
+            (0, 0, 255), (255, 255, 0), (255, 0, 255), (0, 255, 255),
+        )
+        rng = np.random.RandomState(42)
+        pixels = rng.randint(0, 256, size=(500, 3), dtype=np.uint8)
+        sub1 = pixel_color.select_sub_palette(pixels, palette, max_colors=4)
+        sub2 = pixel_color.select_sub_palette(pixels, palette, max_colors=4)
+        self.assertEqual(sub1, sub2)
+        self.assertEqual(len(sub1), 4)
+        # Check subset invariant
+        for c in sub1:
+            self.assertIn(c, palette)
+
+    def test_select_sub_palette_preserves_rare_distinct_color(self):
+        # Palette contains 4 close green shades and 1 bright red
+        palette = (
+            (0, 0, 0),
+            (0, 120, 0),
+            (0, 140, 0),
+            (0, 160, 0),
+            (0, 180, 0),
+            (255, 0, 0),
+        )
+        # 800 green pixels (split across 4 close green shades) and 200 red pixels
+        pixels = np.zeros((1000, 3), dtype=np.uint8)
+        pixels[:200] = (0, 120, 0)
+        pixels[200:400] = (0, 140, 0)
+        pixels[400:600] = (0, 160, 0)
+        pixels[600:800] = (0, 180, 0)
+        pixels[800:] = (255, 0, 0)
+
+        # Prune from 5 active colors to 2 colors
+        # Close greens merge into one another while high-contrast red is preserved
+        sub = pixel_color.select_sub_palette(pixels, palette, max_colors=2)
+        self.assertEqual(len(sub), 2)
+        self.assertIn((255, 0, 0), sub, "Distinct red color should survive greedy pruning")
+
+    def test_reduce_with_max_colors_limit(self):
+        # 16-color palette
+        palette = tuple((i * 16, (255 - i * 16), (i * 8) % 256) for i in range(16))
+        arr = np.random.RandomState(99).randint(0, 256, size=(64, 64, 4), dtype=np.uint8)
+        arr[..., 3] = 255
+        img = Image.fromarray(arr, mode="RGBA")
+
+        # Limit to 4 colors
+        res = pixel_reduce.reduce_pixel_art(img, density=16, palette=palette, max_colors=4)
+        self.assertLessEqual(len(res.palette), 4)
+        unique_pixels = np.unique(np.asarray(res.image)[..., :3].reshape(-1, 3), axis=0)
+        self.assertLessEqual(len(unique_pixels), 4)
+        for c in res.palette:
+            self.assertIn(c, palette)
+
+
 
 class QVoteTest(unittest.TestCase):
     def test_cell_majority_vote(self):

@@ -1,7 +1,7 @@
 /* 密度与调色板控件。色值一律来自运行时（pixel_palettes），本文件不内联任何色值。 */
 import { SMALL_WARN_IDS, SMALL_WARN_TEXT } from './config.js';
 import { S } from './state.js';
-import { $, clear, el, note } from './dom.js';
+import { $, clear, el, note, safeStr } from './dom.js';
 /* 改密度 / 换调色板都要对缓存的首轮模型输出重新量化（0 token），
    那条路径在 pipeline.js 里。这里的循环引用是良性的：两边都只在运行时调用对方。 */
 import { scheduleRepixelize } from './pipeline.js';
@@ -38,16 +38,6 @@ export function renderSizes() {
   });
 }
 
-export function swatchStrip(colors, max) {
-  var wrap = el("span", { class: "sw" });
-  var list = colors || [];
-  var cap = max || 24;
-  for (var i = 0; i < list.length && i < cap; i++)
-    wrap.appendChild(el("i", { style: "background:" + cssColor(list[i]), title: list[i] }));
-  if (list.length > cap) wrap.appendChild(el("span", { class: "tiny dim", text: "+" + (list.length - cap) }));
-  return wrap;
-}
-
 export function cssColor(v) {
   return (typeof v === "string" && /^#[0-9a-fA-F]{3}([0-9a-fA-F]{3})?$/.test(v)) ? v : "transparent";
 }
@@ -67,21 +57,6 @@ export function renderPresets() {
   markSelectedPreset();
 }
 
-export function renderMaxColorChoices() {
-  var select = $("#max-colors");
-  var choices = (S.meta && S.meta.color_choices) || [8, 12, 16, 24, 32, 48, 64];
-  clear(select);
-  choices.forEach(function (n) {
-    select.appendChild(el("option", { value: String(n), text: n + " 色" }));
-  });
-  var wanted = String(S.maxColors || 16);
-  var found = false;
-  for (var i = 0; i < choices.length; i++) if (String(choices[i]) === wanted) found = true;
-  if (!found) wanted = String(choices[0] || 16);
-  select.value = wanted;
-  S.maxColors = parseInt(wanted, 10);
-}
-
 export function presetButton(p) {
   var isAuto = !!p.auto || p.id === "auto";
   var btn = el("button", {
@@ -92,20 +67,16 @@ export function presetButton(p) {
   if (!isAuto && typeof p.count === "number") head.appendChild(el("span", { class: "pn", text: p.count + " 色" }));
   if (p.verified) head.appendChild(el("span", { class: "badge-ok", text: "verified" }));
   btn.appendChild(head);
-  if (!isAuto && p.colors && p.colors.length) btn.appendChild(swatchStrip(p.colors, 16));
   var note = p.note_zh || p.note;
   if (note && !isAuto) btn.appendChild(el("span", { class: "note", text: note }));
-  if (isAuto) btn.appendChild(el("span", { class: "note", text: "不绑定固定色板，按 max colors 自动量化。" }));
+  if (isAuto) btn.appendChild(el("span", { class: "note", text: "不绑定固定色板，按 Oklab K-Means 自动提取。" }));
   btn.addEventListener("click", function () {
     if (isAuto) {
       S.paletteMode = "auto";
       S.preset = null;
-      $("#custom-hex").value = "";
-      $("#custom-hex").disabled = true;
     } else {
       S.paletteMode = "preset";
       S.preset = p.id;
-      $("#custom-hex").disabled = false;
       $("#custom-hex").value = (p.colors || []).join(", ");
     }
     syncPaletteUI();
@@ -154,14 +125,78 @@ export function paletteForRequest() {
   return S.preset ? { preset: S.preset } : null;
 }
 
+export function wireMaxColorsControls() {
+  var modeAll = $("#max-colors-mode-all");
+  var modeCustom = $("#max-colors-mode-custom");
+  var valInput = $("#max-colors-val");
+  if (!modeAll || !modeCustom || !valInput) return;
+
+  modeAll.addEventListener("change", function () {
+    if (modeAll.checked) {
+      S.maxColorsMode = "all";
+      valInput.disabled = true;
+      updateMaxColorsStatus();
+      renderLivePaletteEcho();
+      if (S.paletteMode !== "auto") {
+        scheduleRepixelize("颜色限制 → 全部");
+      }
+    }
+  });
+
+  modeCustom.addEventListener("change", function () {
+    if (modeCustom.checked) {
+      S.maxColorsMode = "custom";
+      valInput.disabled = S.paletteMode === "auto";
+      var num = parseInt(valInput.value, 10);
+      if (isNaN(num) || num < 2) num = 8;
+      S.maxColorsLimit = num;
+      updateMaxColorsStatus();
+      renderLivePaletteEcho();
+      if (S.paletteMode !== "auto") {
+        scheduleRepixelize("颜色限制 → " + num + " 色");
+      }
+    }
+  });
+
+  valInput.addEventListener("input", function () {
+    var num = parseInt(valInput.value, 10);
+    if (!isNaN(num) && num >= 2) {
+      S.maxColorsLimit = num;
+      updateMaxColorsStatus();
+      renderLivePaletteEcho();
+      if (S.paletteMode !== "auto") {
+        scheduleRepixelize("颜色限制 → " + num + " 色");
+      }
+    }
+  });
+}
+
+export function updateMaxColorsStatus() {
+  var st = $("#max-colors-status");
+  if (!st) return;
+  if (S.paletteMode === "auto") {
+    st.textContent = "Auto 模式下由算法自动提取色板";
+    return;
+  }
+  if (S.maxColorsMode === "all") {
+    st.textContent = "当前：使用所选色板全部颜色";
+  } else {
+    st.textContent = "当前：限定最多使用 " + (S.maxColorsLimit || 8) + " 色";
+  }
+}
+
 export function syncPaletteUI() {
   markSelectedPreset();
   var auto = S.paletteMode === "auto";
-  $("#auto-options").hidden = !auto;
-  $("#max-colors").hidden = !auto;
-  $("#max-colors-lbl").hidden = !auto;
-  $("#max-colors-hint").hidden = !auto;
-  $("#custom-hex").disabled = auto;
+  var modeAll = $("#max-colors-mode-all");
+  var modeCustom = $("#max-colors-mode-custom");
+  var valInput = $("#max-colors-val");
+  
+  if (modeAll && modeCustom && valInput) {
+    modeAll.disabled = auto;
+    modeCustom.disabled = auto;
+    valInput.disabled = auto || (S.maxColorsMode === "all");
+  }
 
   var caution = $("#palette-caution");
   clear(caution);
@@ -169,16 +204,12 @@ export function syncPaletteUI() {
     var p = presetById(S.preset);
     var warn = false, text = SMALL_WARN_TEXT;
     if (p && Array.isArray(p.weak_at)) {
-      /* weak_at 是服务端给的“这套色板在哪些尺寸下会不够用”，它才是权威：
-         同样 16 色的 pico8 在 8×8 没问题、db16 就有问题，光看颜色数推不出来。
-         所以这里不做二次推断，服务端说什么就是什么。 */
       warn = p.weak_at.indexOf(S.size) >= 0;
       if (warn) {
         text = "服务端标注这套色板在 " + p.weak_at.map(function (n) { return n + "×" + n; }).join(" / ") +
                " 密度档位下颜色会不够用：细节上限由实际输出网格决定。";
       }
     } else if (p) {
-      /* 服务端没给 weak_at（只按 CONTRACT.md 实现的那一版没有这个字段）时的保守退路 */
       if (p.min_size && S.size < p.min_size) { warn = true; }
       if (p.warn_small || p.small_warning) { warn = true; text = p.small_warning || p.warn_small; }
       else if (SMALL_WARN_IDS[p.id]) { warn = true; }
@@ -189,6 +220,8 @@ export function syncPaletteUI() {
     }
   }
   updateHexStatus();
+  updateMaxColorsStatus();
+  renderLivePaletteEcho();
 }
 
 export function updateHexStatus() {
@@ -203,4 +236,49 @@ export function updateHexStatus() {
   }
   var maxc = (S.meta && S.meta.max_palette_colors) || 256;
   if (r.colors.length > maxc) st.textContent += "；超过上限 " + maxc + " 色，服务端会拒绝";
+}
+
+export function renderLivePaletteEcho() {
+  var box = $("#pal-echo");
+  var meta = $("#pal-echo-meta");
+  if (!box || !meta) return;
+
+  clear(box);
+  meta.textContent = "";
+
+  if (S.paletteMode === "auto") {
+    var pItem = el("span", { class: "dim tiny", text: "Auto 模式：将在生成/量化时根据图像内容动态提取最佳色彩（Oklab K-Means）。" });
+    box.appendChild(pItem);
+    meta.textContent = "模式 = auto  ·  K-Means 聚类";
+    return;
+  }
+
+  var colors = [];
+  if (S.paletteMode === "preset") {
+    var p = presetById(S.preset);
+    if (p && p.colors) colors = p.colors;
+  } else if (S.paletteMode === "custom") {
+    var r = parseHexList($("#custom-hex").value);
+    colors = r.colors;
+  }
+
+  if (!colors.length) {
+    box.appendChild(el("span", { class: "dim tiny", text: "尚未选择或输入有效颜色。" }));
+    return;
+  }
+
+  colors.forEach(function (hex) {
+    var s = el("span", {});
+    s.appendChild(el("i", { style: "background:" + cssColor(hex), title: safeStr(hex) }));
+    s.appendChild(el("span", { text: safeStr(hex) }));
+    box.appendChild(s);
+  });
+
+  var bits = ["共 " + colors.length + " 色"];
+  if (S.maxColorsMode === "custom" && S.maxColorsLimit && S.maxColorsLimit < colors.length) {
+    bits.push("限定提取最多 " + S.maxColorsLimit + " 色子集（量化时按加权感知误差剪枝）");
+  } else {
+    bits.push("使用全部 " + colors.length + " 色");
+  }
+  meta.textContent = bits.join("  ·  ");
 }
