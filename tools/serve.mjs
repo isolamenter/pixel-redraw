@@ -29,6 +29,8 @@ const TYPES = {
   '.json': 'application/json; charset=utf-8',
   '.py': 'text/x-python; charset=utf-8',
   '.wasm': 'application/wasm',
+  '.whl': 'application/zip',
+  '.zip': 'application/zip',
   '.png': 'image/png',
   '.svg': 'image/svg+xml',
   '.ico': 'image/x-icon',

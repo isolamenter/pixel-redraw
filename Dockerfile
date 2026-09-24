@@ -1,7 +1,5 @@
-# 一个只发静态文件的镜像：没有后端进程、没有依赖安装、没有可写目录。
-#
-# 不需要构建期外网：Pyodide 由浏览器在运行时从 CDN 取（约 7.5MB，一年缓存）。
-# 代价见 README「网络前提」——用户浏览器必须能访问 CDN 与模型端点。
+# 一个只发静态文件的镜像：没有后端进程、没有可写目录。
+# Pyodide WASM 运行时与 Python 核心源码已内置于镜像内，无需外网 CDN。
 FROM nginx:1.27-alpine
 
 COPY deploy/nginx.conf /etc/nginx/conf.d/default.conf

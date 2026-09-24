@@ -127,7 +127,7 @@ if (booted) {
   const presets = await evaluate("document.querySelectorAll('#presets button').length");
   const version = await evaluate("document.querySelector('#chip-version b').textContent");
   console.log(`  sizes=${sizes} presets=${presets} version=${version}`);
-  if (sizes !== 5) failures.push(`expected 5 density options, got ${sizes}`);
+  if (sizes !== 7) failures.push(`expected 7 density options, got ${sizes}`);
   if (presets < 15) failures.push(`expected the 15 presets plus the auto button, got ${presets}`);
   if (!version || version === '—') failures.push(`version chip never filled in: ${version}`);
 
@@ -207,9 +207,9 @@ if (booted) {
         })()`);
         console.log('  probe: ' + probe);
       }
-      /* 128px 源图在 32 密度（256 基准）下应得 16x16 逻辑网格 */
-      if (result.width !== 16 || result.height !== 16) {
-        failures.push(`expected a 16x16 logical grid for a 128px source at density 32, got ${result.width}x${result.height}`);
+      /* 128px 源图在 32 密度下应得 32x32 逻辑网格 */
+      if (result.width !== 32 || result.height !== 32) {
+        failures.push(`expected a 32x32 logical grid for a 128px source at density 32, got ${result.width}x${result.height}`);
       }
       if (result.errors > 0) failures.push(`${result.errors} error block(s) in the console`);
       const downloadEnabled = await evaluate("!document.querySelector('#download-pixel').classList.contains('is-disabled')");

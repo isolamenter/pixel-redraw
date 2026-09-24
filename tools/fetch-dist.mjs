@@ -21,7 +21,8 @@ const PACKAGES = ['pillow', 'numpy'];
 
 const here = fileURLToPath(new URL('.', import.meta.url));
 const source = join(here, 'node_modules', 'pyodide');
-const target = join(here, 'pyodide-dist');
+const target = join(here, '..', 'static', 'pyodide');
+const testDist = join(here, 'pyodide-dist');
 
 if (!existsSync(source)) {
   console.error(
@@ -55,4 +56,7 @@ for (const name of PACKAGES) {
   console.log(`fetched ${file} (${(bytes.length / 1024 / 1024).toFixed(1)} MB)`);
 }
 
-console.log(`\npyodide-dist/ ready for Pyodide ${PYODIDE_VERSION} with ${PACKAGES.join(', ')}`);
+rmSync(testDist, { recursive: true, force: true });
+cpSync(target, testDist, { recursive: true });
+
+console.log(`\nstatic/pyodide/ and tools/pyodide-dist/ ready for Pyodide ${PYODIDE_VERSION} with ${PACKAGES.join(', ')}`);

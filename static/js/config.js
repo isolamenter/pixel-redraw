@@ -2,9 +2,8 @@
    这些都是程序的属性，不是用户的属性 —— 与 pixel_pipeline.web_meta() 同源；
    能由运行时回答的（密度、调色板、上限）一律从 meta 取，本文件只做兜底。 */
 
-/* 运行时（Pyodide）从哪里加载。整个应用没有后端，这一行是唯一的第三方依赖；
-   若内网访问不到 jsDelivr，把这里换成本地自托管副本的路径即可，无需改其他代码。 */
-export var PYODIDE_INDEX_URL = "https://cdn.jsdelivr.net/pyodide/v314.0.7/full/";
+/* 运行时（Pyodide）从本地加载（无需外网 CDN）。 */
+export var PYODIDE_INDEX_URL = new URL("../pyodide/", import.meta.url).href;
 
 /* 上游阶段：仅本地渲染时不会出现，标记为“跳过”而不是永远转圈。 */
 export var PHASE_ZH = {
