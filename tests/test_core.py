@@ -476,6 +476,10 @@ class TwoPassDecouplingTest(unittest.TestCase):
             for c in colors:
                 self.assertIn(c, gameboy)
 
+        # Guide outputs must exist and reflect adaptive resolution
+        self.assertIsNotNone(generation.outputs.get("guide_png"))
+        self.assertEqual(generation.outputs.get("guide_size"), [64, 64])
+
     def test_single_pass_applies_user_config_directly(self):
         gameboy = ((15, 56, 15), (48, 98, 48), (139, 172, 15), (155, 188, 15))
         config = pr.make_config(
