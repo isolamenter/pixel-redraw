@@ -15,18 +15,24 @@
 
 ## 2. 核心工作流
 
-### 2.1 双轮生成流程 (Dual-Pass Generation)
+### 2.1 双轮生成流程与参数解耦 (Dual-Pass Generation & Parameter Decoupling)
 
 默认启用双轮生成：
-1. **Pass 1 (Draft Generation)**: 输入原图与初始提示词，调用 Gemini 获得初稿高分辨率渲染图。
-2. **Intermediate Reduction**: 将初稿送入像素化 Reducer 得到逻辑像素网格草稿，并以最近邻放大（Nearest-Neighbor）格式保留。
-3. **Pass 2 (Refinement)**: 将放大后的草稿图作为第一张图片、原图作为第二张参考图，输入精修提示词，由 Gemini 重新梳理轮廓与色块结构。
-4. **Final Reduction**: 对精修输出再次执行统一像素化 Reducer，生成最终逻辑像素图像。
+1. **Pass 1 (语义构图与草稿生成)**:
+   - **调色板**：固定采用 `Auto` 调色板（K-Means 聚类），保留原图色彩层次与明暗梯度。
+   - **像素密度**：根据原图长宽尺寸执行**自适应密度适配**（`adaptive_density_for_source`：$\ge 2560\text{px} \to 128$，$1024 \sim 2559\text{px} \to 64$，$384 \sim 1023\text{px} \to 32$，$128 \sim 383\text{px} \to 16$，$ < 128\text{px} \to 8$），避免严苛调色板或极低密度导致模型首轮语义与结构塌陷。
+   - 将原图与自适应参考 guide 送入 Gemini 获得高分辨率初稿。
+2. **Intermediate Reduction (目标风格转换与草稿降采样)**:
+   - 将初稿按**用户选择的目标调色板与目标密度**送入 Reducer 得到逻辑像素草稿，并以最近邻放大（Nearest-Neighbor）格式作为 Pass 2 的 Review 输入。
+3. **Pass 2 (风格收敛与点阵精修)**:
+   - 将放大后的目标风格草稿图作为第一张图片、原图作为第二张参考图，输入精修提示词，由 Gemini 重新梳理受限色板与目标密度下的边缘轮廓与色块结构。
+4. **Final Reduction**:
+   - 对精修输出再次执行统一像素化 Reducer（应用用户目标调色板与密度），并严格校验调色板闭包不变量。
 
-**容错与回退机制**：
-- 若 Pass 2 失败（如模型超时、返回空内容、安全拦截等），系统自动回退使用 Pass 1 草稿作为最终结果，不会报错中断。
+**单轮与容错机制**：
+- **单轮模式 (`passes == 1`)**：直接在 Pass 1 应用用户指定的目标调色板与密度。
+- **容错与回退**：若 Pass 2 失败（如模型超时、返回空内容、安全拦截等），系统自动回退使用基于用户参数降采样的 Pass 1 草稿作为最终结果，不会报错中断。
 - 报告中通过 `refinement_applied: bool` 显式标识是否应用了精修。
-- 用户可选择单轮模式（Single Pass）以跳过 Pass 2，节省 API 调用成本。
 
 ### 2.2 仅本地渲染 / 重像素化 (Repixelize)
 

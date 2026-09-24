@@ -411,5 +411,89 @@ class CorePurityTest(unittest.TestCase):
         pixel_palettes.self_check()  # raises AssertionError on a broken preset
 
 
+class AdaptiveDensityTest(unittest.TestCase):
+    def test_adaptive_density_resolution_buckets(self):
+        # 4K / UHD -> 128
+        self.assertEqual(pr.adaptive_density_for_source((4096, 4096)), 128)
+        self.assertEqual(pr.adaptive_density_for_source((3840, 2160)), 128)
+        self.assertEqual(pr.adaptive_density_for_source((2560, 1440)), 128)
+
+        # 1080p / 2K -> 64
+        self.assertEqual(pr.adaptive_density_for_source((1920, 1080)), 64)
+        self.assertEqual(pr.adaptive_density_for_source((1024, 1024)), 64)
+
+        # ~512px -> 32
+        self.assertEqual(pr.adaptive_density_for_source((800, 600)), 32)
+        self.assertEqual(pr.adaptive_density_for_source((512, 512)), 32)
+        self.assertEqual(pr.adaptive_density_for_source((384, 384)), 32)
+
+        # ~256px -> 16
+        self.assertEqual(pr.adaptive_density_for_source((256, 256)), 16)
+        self.assertEqual(pr.adaptive_density_for_source((200, 200)), 16)
+        self.assertEqual(pr.adaptive_density_for_source((128, 128)), 16)
+
+        # tiny / icon -> 8
+        self.assertEqual(pr.adaptive_density_for_source((64, 64)), 8)
+        self.assertEqual(pr.adaptive_density_for_source((32, 32)), 8)
+
+
+class TwoPassDecouplingTest(unittest.TestCase):
+    def test_two_pass_isolates_pass1_auto_and_adaptive_density(self):
+        gameboy = ((15, 56, 15), (48, 98, 48), (139, 172, 15), (155, 188, 15))
+        # User requested Game Boy palette and density 16 on a 512x512 image
+        config = pr.make_config(
+            model="test-model",
+            api_key="test-key",
+            size=16,
+            palette=gameboy,
+            passes=2,
+        )
+        src = source_png(size=(512, 512), color="red")
+        upstream = FakeUpstream(image_response("red", size=(512, 512)), image_response("green", size=(512, 512)))
+        generation = run_generation(pr.generate(config, src, upstream))
+
+        self.assertEqual(len(upstream.payloads), 2)
+
+        # Pass 1 payload prompt should reflect adaptive density 32 (512x512 -> 64x64 grid on 256 ref)
+        pass1_prompt = upstream.payloads[0]["contents"][0]["parts"][0]["text"]
+        self.assertIn("64x64", pass1_prompt)
+
+        # Pass 2 payload prompt should reflect user requested density 16 (512x512 -> 32x32 grid on 256 ref)
+        pass2_prompt = upstream.payloads[1]["contents"][0]["parts"][0]["text"]
+        self.assertIn("32x32", pass2_prompt)
+
+        # Pass 2 intermediate review image should be quantized to Game Boy palette
+        pass2_review_b64 = upstream.payloads[1]["contents"][0]["parts"][2]["inline_data"]["data"]
+        with Image.open(io.BytesIO(base64.b64decode(pass2_review_b64))) as review_img:
+            colors = set(review_img.convert("RGB").getdata())
+            # All non-empty pixels must strictly be in Game Boy palette
+            for c in colors:
+                self.assertIn(c, gameboy)
+
+        # Final output must satisfy Game Boy palette
+        with Image.open(io.BytesIO(generation.outputs["pixel_png"])) as final_img:
+            colors = set(final_img.convert("RGB").getdata())
+            for c in colors:
+                self.assertIn(c, gameboy)
+
+    def test_single_pass_applies_user_config_directly(self):
+        gameboy = ((15, 56, 15), (48, 98, 48), (139, 172, 15), (155, 188, 15))
+        config = pr.make_config(
+            model="test-model",
+            api_key="test-key",
+            size=16,
+            palette=gameboy,
+            passes=1,
+        )
+        src = source_png(size=(512, 512), color="red")
+        upstream = FakeUpstream(image_response("green", size=(512, 512)))
+        generation = run_generation(pr.generate(config, src, upstream))
+
+        self.assertEqual(len(upstream.payloads), 1)
+        pass1_prompt = upstream.payloads[0]["contents"][0]["parts"][0]["text"]
+        # Single pass: prompt immediately uses user size 16 (32x32 on 512x512)
+        self.assertIn("32x32", pass1_prompt)
+
+
 if __name__ == "__main__":
     unittest.main()

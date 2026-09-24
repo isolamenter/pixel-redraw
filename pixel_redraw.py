@@ -427,6 +427,43 @@ def configure_for_source(config: Config, source_size: tuple[int, int]) -> Config
     )
 
 
+def adaptive_density_for_source(source_size: tuple[int, int]) -> int:
+    """Choose an optimal Pass 1 density from SIZES (8, 16, 32, 64, 128) based on source resolution.
+
+    - >= 2560px (4K / ultra-high-res): 128
+    - 1024px ~ 2559px (1080p / 2K): 64
+    - 384px ~ 1023px (~512px standard): 32
+    - 128px ~ 383px (~256px small): 16
+    - < 128px (tiny icons / thumbnails): 8
+    """
+    max_dim = max(source_size[0], source_size[1])
+    if max_dim >= 2560:
+        return 128
+    elif max_dim >= 1024:
+        return 64
+    elif max_dim >= 384:
+        return 32
+    elif max_dim >= 128:
+        return 16
+    else:
+        return 8
+
+
+def derive_pass1_config(config: Config, source_size: tuple[int, int]) -> Config:
+    """Build the Pass 1 configuration: auto palette and source-adaptive density."""
+    density = adaptive_density_for_source(source_size)
+    pass1_base = (density, density)
+    return configure_for_source(
+        replace(
+            config,
+            base_size=pass1_base,
+            palette=None,
+            max_colors=None,
+        ),
+        source_size,
+    )
+
+
 def parse_palette(value: str) -> tuple[tuple[int, int, int], ...] | None:
     value = value.strip()
     if not value or value.lower() in {"auto", "none"}:
@@ -1278,8 +1315,10 @@ async def generate(
     else:
         validate_upstream(config)
 
-        announce("upstream_wait", "正在调用模型", f"{config.model} @ {safe_host(config.base_url)}")
-        response = await call_upstream(build_payload(source_bytes, config))
+        config_pass1 = derive_pass1_config(config, source_size) if config.passes == 2 else config
+
+        announce("upstream_wait", "正在调用模型", f"{config_pass1.model} @ {safe_host(config_pass1.base_url)}")
+        response = await call_upstream(build_payload(source_bytes, config_pass1))
         announce("upstream_response", "模型已返回", "")
 
         announce("extract_start", "正在解析模型输出", "")
