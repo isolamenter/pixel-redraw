@@ -8,11 +8,11 @@ import { scheduleRepixelize } from './pipeline.js';
 import { applyDefaultZoom } from './results.js';
 
 export var SIZE_TRUTH = {
-  8: "极限抽象，适合微图标 / 表情",
-  16: "经典复古，适合图标 / 道具",
-  32: "角色 / 道具级（黄金尺寸）",
-  64: "细节较丰富，适合角色头像 / 场景",
-  128: "高密度，适合复杂画幅 / 纹理"
+  8: "极限抽象，微图标与表情",
+  16: "经典复古，道具与图标级",
+  32: "角色道具，常用黄金尺寸",
+  64: "细节丰富，适合头像与场景",
+  128: "高密度，复杂画幅与纹理"
 };
 
 export function calculateProportionalOutput(w, h, baseSize) {
@@ -78,6 +78,15 @@ export function renderSizes() {
     ]));
     box.appendChild(lab);
   });
+
+  if (sizes.length % 2 !== 0) {
+    var tipCard = el("div", { class: "size-tip-card" }, [
+      el("span", { class: "tip-badge", text: "等比换算提示" }),
+      el("span", { class: "tip-text", text: "基准基于 256 规格；实际画布长宽比随输入图像等比衍生。" })
+    ]);
+    box.appendChild(tipCard);
+  }
+
   updateSpecSummary();
 }
 

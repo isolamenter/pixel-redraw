@@ -206,8 +206,7 @@ export function renderScalePills() {
     { key: "original", label: "原图" },
     { key: "1024", label: "1024 边长" },
     { key: "512", label: "512 边长" },
-    { key: "256", label: "256 边长" },
-    { key: "128", label: "128 边长" }
+    { key: "256", label: "256 边长" }
   ];
 
   var hasBmp = !!S.uploadSourceBitmap;
@@ -265,37 +264,55 @@ export function renderUploadInfo(source) {
   ]);
 
   var isScaled = (info.w !== info.ow || info.h !== info.oh);
-  var dimText = isScaled
-    ? "等比缩放 " + info.w + "×" + info.h + "（PNG " + fmtBytes(info.encBytes) + "）"
-    : "保留原图 " + info.w + "×" + info.h + "（PNG " + fmtBytes(info.encBytes) + "）";
+  var scaleText = isScaled ? (info.w + "×" + info.h) : "保持原图";
 
-  var metaWrap = el("div", { class: "upload-card-meta" }, [
-    el("div", { class: "row-tight", style: "justify-content:space-between" }, [
-      el("span", { class: "badge-ok", text: "已就绪 (" + source + ")" }),
-      el("span", { class: "tiny dim", text: S.uploadName || "" })
+  var header = el("div", { class: "upload-card-header" }, [
+    el("span", { class: "badge-ok", text: "已就绪 (" + source + ")" }),
+    el("span", { class: "upload-card-filename", text: S.uploadName || "未命名图像", title: S.uploadName || "" })
+  ]);
+
+  var statsGrid = el("div", { class: "upload-stats-grid" }, [
+    el("div", { class: "stat-item" }, [
+      el("span", { class: "stat-label", text: "原始尺寸" }),
+      el("span", { class: "stat-value", text: info.ow + "×" + info.oh })
     ]),
-    el("div", { class: "kv", text: "原始尺寸：" + info.ow + "×" + info.oh + "（" + fmtBytes(info.srcBytes) + "）" }),
-    el("div", { class: "kv", text: dimText }),
-    el("div", { class: "kv", text: "Base64 约 " + fmtBytes(Math.ceil(info.encBytes / 3) * 4) })
+    el("div", { class: "stat-item" }, [
+      el("span", { class: "stat-label", text: "输入体积" }),
+      el("span", { class: "stat-value", text: fmtBytes(info.srcBytes) })
+    ]),
+    el("div", { class: "stat-item" }, [
+      el("span", { class: "stat-label", text: isScaled ? "等比缩放" : "当前档位" }),
+      el("span", { class: "stat-value", text: scaleText })
+    ]),
+    el("div", { class: "stat-item" }, [
+      el("span", { class: "stat-label", text: "Base64 预估" }),
+      el("span", { class: "stat-value", text: "约 " + fmtBytes(Math.ceil(info.encBytes / 3) * 4) })
+    ])
   ]);
 
   var actWrap = el("div", { class: "upload-card-actions" });
   var reselectLabel = el("label", {
     for: "file-input",
     class: "btn btn-sm",
-    style: "cursor:pointer",
+    style: "cursor:pointer; flex:1; justify-content:center",
     text: "更换图片"
   });
   var clearBtn = el("button", {
     type: "button",
     class: "btn btn-sm btn-danger",
+    style: "flex:1; justify-content:center",
     text: "清除图片"
   });
   clearBtn.addEventListener("click", clearUploadedImage);
 
   actWrap.appendChild(reselectLabel);
   actWrap.appendChild(clearBtn);
-  metaWrap.appendChild(actWrap);
+
+  var metaWrap = el("div", { class: "upload-card-meta" }, [
+    header,
+    statsGrid,
+    actWrap
+  ]);
 
   box.appendChild(prevWrap);
   box.appendChild(metaWrap);

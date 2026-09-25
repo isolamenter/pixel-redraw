@@ -20,13 +20,12 @@ export var S = {
   uploadSourceBitmap: null, // 解码后的原图 ImageBitmap 或可绘制对象
   uploadOriginalFile: null, // 用户传入的原始文件对象
   uploadSource: "",        // drop | paste | picker
-  inputScale: "original",   // original | 1024 | 512 | 256 | 128
+  inputScale: "original",   // original | 1024 | 512 | 256
   inputScaleOptions: [
     { key: "original", label: "原图" },
     { key: "1024", label: "1024 边长" },
     { key: "512", label: "512 边长" },
-    { key: "256", label: "256 边长" },
-    { key: "128", label: "128 边长" }
+    { key: "256", label: "256 边长" }
   ],
   size: 32,
   paletteMode: "auto",     // preset | auto | custom
