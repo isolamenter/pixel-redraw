@@ -71,9 +71,8 @@ export function renderSizes() {
       scheduleRepixelize("密度档位 → " + n + "×" + n + "（256 基准）");
     });
     lab.appendChild(input);
-    lab.appendChild(el("span", {}, [
+    lab.appendChild(el("span", { class: "size-content" }, [
       el("span", { class: "n", text: n + "×" + n + " 基准" }),
-      el("br"),
       el("span", { class: "t", text: SIZE_TRUTH[n] || "" }),
       el("span", { class: "size-out", id: "size-out-" + n, text: formatOutputPreviewText(n) })
     ]));
