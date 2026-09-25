@@ -15,6 +15,45 @@ export var SIZE_TRUTH = {
   128: "高密度，适合复杂画幅 / 纹理"
 };
 
+export function calculateProportionalOutput(w, h, baseSize) {
+  var outW = Math.max(1, Math.round(w * baseSize / 256));
+  var outH = Math.max(1, Math.round(h * baseSize / 256));
+  return { w: outW, h: outH };
+}
+
+export function formatOutputPreviewText(n) {
+  if (S.uploadInfo && S.uploadInfo.w && S.uploadInfo.h) {
+    var out = calculateProportionalOutput(S.uploadInfo.w, S.uploadInfo.h, n);
+    return "输出 " + out.w + "×" + out.h + " px";
+  }
+  return "基准 " + n + "×" + n;
+}
+
+export function updateSpecSummary() {
+  var inEl = $("#summary-in");
+  var densityEl = $("#summary-density");
+  var outEl = $("#summary-out");
+  if (!inEl || !densityEl || !outEl) return;
+  densityEl.textContent = S.size + "×" + S.size;
+  if (S.uploadInfo && S.uploadInfo.w && S.uploadInfo.h) {
+    inEl.textContent = S.uploadInfo.w + "×" + S.uploadInfo.h;
+    var out = calculateProportionalOutput(S.uploadInfo.w, S.uploadInfo.h, S.size);
+    outEl.textContent = out.w + " × " + out.h + " 像素";
+  } else {
+    inEl.textContent = "—";
+    outEl.textContent = "—（待上传）";
+  }
+}
+
+export function refreshSizesOutput() {
+  var sizes = (S.meta && S.meta.sizes) || [8, 16, 32, 64, 128];
+  sizes.forEach(function (n) {
+    var badge = $("#size-out-" + n);
+    if (badge) badge.textContent = formatOutputPreviewText(n);
+  });
+  updateSpecSummary();
+}
+
 export function renderSizes() {
   var box = $("#sizes");
   clear(box);
@@ -28,14 +67,19 @@ export function renderSizes() {
       if (!input.checked) return;
       S.size = n;
       applyDefaultZoom();
+      updateSpecSummary();
       scheduleRepixelize("密度档位 → " + n + "×" + n + "（256 基准）");
     });
     lab.appendChild(input);
     lab.appendChild(el("span", {}, [
-      el("span", { class: "n", text: n + "×" + n + " 基准" }), el("br"), el("span", { class: "t", text: SIZE_TRUTH[n] || "" })
+      el("span", { class: "n", text: n + "×" + n + " 基准" }),
+      el("br"),
+      el("span", { class: "t", text: SIZE_TRUTH[n] || "" }),
+      el("span", { class: "size-out", id: "size-out-" + n, text: formatOutputPreviewText(n) })
     ]));
     box.appendChild(lab);
   });
+  updateSpecSummary();
 }
 
 export function cssColor(v) {

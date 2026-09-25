@@ -15,8 +15,19 @@ export var S = {
   bootError: null,
 
   uploadBlob: null,        // 保留原比例的规范化 PNG
-  uploadInfo: null,        // {ow, oh, w, h, srcBytes, encBytes}
+  uploadInfo: null,        // {ow, oh, w, h, srcBytes, encBytes, scale}
   uploadName: "",
+  uploadSourceBitmap: null, // 解码后的原图 ImageBitmap 或可绘制对象
+  uploadOriginalFile: null, // 用户传入的原始文件对象
+  uploadSource: "",        // drop | paste | picker
+  inputScale: "original",   // original | 1024 | 512 | 256 | 128
+  inputScaleOptions: [
+    { key: "original", label: "原图" },
+    { key: "1024", label: "1024 边长" },
+    { key: "512", label: "512 边长" },
+    { key: "256", label: "256 边长" },
+    { key: "128", label: "128 边长" }
+  ],
   size: 32,
   paletteMode: "auto",     // preset | auto | custom
   preset: null,
@@ -34,6 +45,8 @@ export var S = {
   failedPhase: null,
 
   lastResultRawB64: null,  // 模型原始输出，供「改尺寸/换调色板」零成本重渲染
+  lastResultPass1RawB64: null, // Pass 1 模型原始输出
+  lastResultPass2RawB64: null, // Pass 2 模型原始输出
   lastResultDraftB64: null, // 首轮量化中间草稿，重渲染时保留展示
   lastResultGuideB64: null, // Pass 1 自适应参考 Guide
   lastResultSource: null,  // 'generate' | 'repixelize'

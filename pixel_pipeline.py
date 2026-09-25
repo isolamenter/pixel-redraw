@@ -240,6 +240,8 @@ async def run_pipeline(source_b64: str, request_json: str, on_progress: Any = No
 
         outputs = generation.outputs
         raw = outputs["raw_png"]
+        pass1_raw = outputs.get("pass1_raw_png")
+        pass2_raw = outputs.get("pass2_raw_png")
         draft = outputs.get("draft_png")
         guide = outputs.get("guide_png")
         guide_size = outputs.get("guide_size")
@@ -252,6 +254,10 @@ async def run_pipeline(source_b64: str, request_json: str, on_progress: Any = No
                     "preview_png": base64.b64encode(outputs["preview_png"]).decode("ascii"),
                     "raw_png": base64.b64encode(raw).decode("ascii") if raw else None,
                     "raw_mime": pr.sniff_content_type(raw) if raw else None,
+                    "pass1_raw_png": base64.b64encode(pass1_raw).decode("ascii") if pass1_raw else None,
+                    "pass1_raw_mime": pr.sniff_content_type(pass1_raw) if pass1_raw else None,
+                    "pass2_raw_png": base64.b64encode(pass2_raw).decode("ascii") if pass2_raw else None,
+                    "pass2_raw_mime": pr.sniff_content_type(pass2_raw) if pass2_raw else None,
                     "draft_png": base64.b64encode(draft).decode("ascii") if draft else None,
                     "guide_png": base64.b64encode(guide).decode("ascii") if guide else None,
                     "guide_size": guide_size,

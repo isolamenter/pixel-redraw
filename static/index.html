@@ -113,25 +113,51 @@
     <div class="timeline" id="timeline"><p class="empty">尚无事件。</p></div>
   </section>
 
-  <!-- ============ 输入 ============ -->
-  <section class="panel input-panel">
-    <h2>输入图片 <span class="dim tiny">粘贴、拖入或选择</span></h2>
-    <label class="drop" id="drop" for="file-input">
-      <span class="drop-main">粘贴（Cmd/Ctrl+V）、拖入，或点击选择图片</span>
-      <span class="tiny">支持 PNG / JPEG / GIF / WebP（GIF 只取第一帧）。上传前检查字节数与像素数，保留原图比例，不裁剪。</span>
-    </label>
-    <input class="sr-only" id="file-input" type="file" accept="image/*">
-    <div id="upload-info" class="thumb" style="margin-top:12px" hidden></div>
-  </section>
+  <!-- ============ 图像输入与画布规格 ============ -->
+  <section class="panel input-spec-panel">
+    <h2>图像与画布规格 <span class="dim tiny">等比例预调尺寸、选择像素密度、实时预览输出网格</span></h2>
+    <div class="input-spec-grid" id="input-spec-grid">
+      <!-- 左栏：源图输入与预览卡片 -->
+      <div class="input-spec-left" id="input-spec-left">
+        <label class="drop" id="drop" for="file-input">
+          <span class="drop-main">粘贴（Cmd/Ctrl+V）、拖入，或点击选择图片</span>
+          <span class="tiny">支持 PNG / JPEG / GIF / WebP。保留原图比例，不裁剪。</span>
+        </label>
+        <input class="sr-only" id="file-input" type="file" accept="image/*">
+        <div id="upload-info" class="upload-card" hidden></div>
+      </div>
 
-  <!-- ============ 像素密度 ============ -->
-  <section class="panel density-panel">
-    <h2>像素密度 <span class="dim tiny">以 256×256 为基准，保留原图比例</span></h2>
+      <!-- 右栏：尺寸调整与输出像素密度配置 -->
+      <div class="input-spec-right">
+        <!-- 1. 输入尺寸预调 -->
+        <div class="spec-section">
+          <div class="spec-label-row">
+            <span class="lbl2">输入尺寸预调</span>
+            <span class="dim tiny">限制最长边等比例缩放；降低输入尺寸可减少 Token 消耗并加速生成</span>
+          </div>
+          <div class="scale-pills" id="scale-pills"></div>
+        </div>
 
-    <fieldset class="sizes-wrap">
-      <legend>选择输出网格</legend>
-      <div class="sizes" id="sizes"></div>
-    </fieldset>
+        <!-- 2. 输出像素密度 -->
+        <div class="spec-section" style="margin-top:14px">
+          <fieldset class="sizes-wrap">
+            <legend>选择输出像素密度 <span class="dim tiny">以 256×256 为基准，实际按输入比例换算</span></legend>
+            <div class="sizes" id="sizes"></div>
+          </fieldset>
+        </div>
+
+        <!-- 3. 实时规格推导条 -->
+        <div class="spec-summary" id="spec-summary">
+          <div class="summary-line">
+            <span class="summary-node"><span class="dim">输入尺寸：</span><b id="summary-in">—</b></span>
+            <span class="summary-arrow">×</span>
+            <span class="summary-node"><span class="dim">基准密度：</span><b id="summary-density">32×32</b></span>
+            <span class="summary-arrow">➔</span>
+            <span class="summary-node highlight"><span class="dim">预计输出画布：</span><b id="summary-out">—</b></span>
+          </div>
+        </div>
+      </div>
+    </div>
   </section>
 
   <!-- ============ 调色板 ============ -->
@@ -247,20 +273,20 @@
     <h2>结果 <span class="dim tiny">像素画按整数倍缩放；模型原图自动适配预览框</span></h2>
 
     <div id="ai-row" class="ai-row result-strip">
-      <div id="draft-wrap" class="result-card">
-        <p class="cap" id="cap-draft">自适应参考 Guide <span class="dim">· Pass 1 输入</span></p>
-        <div class="stage stage-pixel-fit" id="stage-draft">
-          <span class="stage-empty">等待生成参考 Guide…</span>
+      <div id="pass1-raw-wrap" class="result-card">
+        <p class="cap">Pass 1 AI 输出 <span class="dim">· 未过格式层</span> · <a class="is-disabled" id="pass1-raw-open" target="_blank" rel="noopener" aria-disabled="true" tabindex="-1">新窗口查看</a></p>
+        <div class="stage stage-fit" id="stage-pass1-raw">
+          <span class="stage-empty">等待 Pass 1 AI 输出…</span>
         </div>
       </div>
-      <div id="raw-wrap" class="result-card">
-        <p class="cap">AI 原始输出 <span class="dim">· 未过格式层</span> · <a class="is-disabled" id="raw-open" target="_blank" rel="noopener" aria-disabled="true" tabindex="-1">新窗口查看</a></p>
-        <div class="stage stage-fit" id="stage-raw">
-          <span class="stage-empty">等待原始输出…</span>
+      <div id="pass2-raw-wrap" class="result-card">
+        <p class="cap">Pass 2 AI 输出 <span class="dim">· 未过格式层</span> · <a class="is-disabled" id="pass2-raw-open" target="_blank" rel="noopener" aria-disabled="true" tabindex="-1">新窗口查看</a></p>
+        <div class="stage stage-fit" id="stage-pass2-raw">
+          <span class="stage-empty">等待 Pass 2 AI 输出…</span>
         </div>
       </div>
       <div id="pixel-wrap" class="result-card">
-        <p class="cap">最终像素图 <span id="cap-logical" class="mono">—</span><span class="dim"> · 棋盘格 = 透明</span></p>
+        <p class="cap">最终输出 <span id="cap-logical" class="mono">—</span><span class="dim"> · 棋盘格 = 透明</span></p>
         <div class="stage" id="stage-pixel">
           <span class="stage-empty">结果预览区（已预留）</span>
         </div>
@@ -299,10 +325,10 @@
 
     <h3>下载 <span class="dim tiny">纯 &lt;a download&gt;，图片是本页内存里的 blob</span></h3>
     <div class="row-tight" id="downloads">
-      <a class="btn btn-sm is-disabled" id="download-draft" aria-disabled="true" tabindex="-1">下载首轮量化中间图</a>
+      <a class="btn btn-sm is-disabled" id="download-pass1-raw" aria-disabled="true" tabindex="-1">下载 Pass 1 原始输出</a>
+      <a class="btn btn-sm is-disabled" id="download-pass2-raw" aria-disabled="true" tabindex="-1">下载 Pass 2 原始输出</a>
       <a class="btn btn-sm is-disabled" id="download-pixel" aria-disabled="true" tabindex="-1">下载 logical PNG</a>
       <a class="btn btn-sm is-disabled" id="download-preview" aria-disabled="true" tabindex="-1">下载 nearest 放大预览</a>
-      <a class="btn btn-sm is-disabled" id="download-raw" aria-disabled="true" tabindex="-1">下载模型原始输出</a>
     </div>
 
     <div class="row-tight resource-actions" style="margin-top:10px">

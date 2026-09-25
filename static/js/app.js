@@ -12,7 +12,7 @@ import {
 } from './stepper.js';
 import { renderPresets, renderSizes, syncPaletteUI, wireMaxColorsControls } from './palette.js';
 import { wireImageInput } from './image.js';
-import { applyDefaultZoom, applyIntermediateZoom, applyZoom, initCopy } from './results.js';
+import { applyDefaultZoom, applyZoom, initCopy } from './results.js';
 import {
   clearStoredKey, knownModelsDatalist, loadSettings, settings, syncSettingsUI,
   upstreamHost, upstreamReady, wireSettingsUI,
@@ -137,7 +137,7 @@ function boot() {
   var resizeTimer = null;
   window.addEventListener("resize", function () {
     if (resizeTimer) clearTimeout(resizeTimer);
-    resizeTimer = setTimeout(function () { applyZoom(); applyIntermediateZoom(); }, 120);
+    resizeTimer = setTimeout(function () { applyZoom(); }, 120);
   });
 
   window.addEventListener("error", function (ev) {

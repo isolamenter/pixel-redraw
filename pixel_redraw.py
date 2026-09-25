@@ -1062,6 +1062,8 @@ def _png_bytes(image: Any) -> bytes:
 def render_outputs(raw: bytes, pixel_image: Any, config: Config, *,
                    refinement_applied: bool = False,
                    input_name: str | None = None,
+                   pass1_raw: bytes | None = None,
+                   pass2_raw: bytes | None = None,
                    draft_png: bytes | None = None,
                    guide_png: bytes | None = None,
                    guide_size: tuple[int, int] | None = None,
@@ -1117,6 +1119,8 @@ def render_outputs(raw: bytes, pixel_image: Any, config: Config, *,
         "pixel_png": pixel_png,
         "preview_png": preview_buffer.getvalue(),
         "raw_png": raw if config.keep_raw else None,
+        "pass1_raw_png": pass1_raw if (config.keep_raw and pass1_raw) else None,
+        "pass2_raw_png": pass2_raw if (config.keep_raw and pass2_raw) else None,
         # The intermediate the page can show between the two passes, when there
         # was a second pass at all.
         "draft_png": draft_png,
@@ -1326,6 +1330,8 @@ async def generate(
     draft_png = None
     guide_png = None
     guide_size = None
+    pass1_raw = None
+    pass2_raw = None
     if pixelize_only:
         raw = source_bytes
     else:
@@ -1351,6 +1357,7 @@ async def generate(
 
         announce("extract_start", "正在解析模型输出", "")
         raw = extract_image(response)
+        pass1_raw = raw
         announce("extracted", "已取得模型输出", f"{len(raw)} 字节")
 
         if config.passes == 2:
@@ -1368,6 +1375,7 @@ async def generate(
                 announce("refine_response", "第二轮已返回", "")
                 raw = extract_image(refined_response)
                 refinement_applied = True
+                pass2_raw = raw
                 draft_png = _png_bytes(draft_image)
                 announce("refined", "精修完成", "")
             except (PixelError, ValueError) as exc:
@@ -1397,6 +1405,8 @@ async def generate(
         raw, pixel_image, config,
         refinement_applied=refinement_applied,
         input_name=input_name,
+        pass1_raw=pass1_raw,
+        pass2_raw=pass2_raw,
         draft_png=draft_png,
         guide_png=guide_png,
         guide_size=guide_size,

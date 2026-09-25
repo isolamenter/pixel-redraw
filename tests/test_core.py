@@ -129,6 +129,27 @@ class TwoPassTest(unittest.TestCase):
         self.assertEqual(len(upstream.payloads), 1)
         self.assertFalse(generation.refinement_applied)
 
+    def test_two_pass_records_pass1_and_pass2_raw_outputs(self):
+        upstream = FakeUpstream(image_response("red"), image_response("blue"))
+        generation = run_generation(pr.generate(self.base_config(), source_png(), upstream))
+
+        self.assertIsNotNone(generation.outputs.get("pass1_raw_png"))
+        self.assertIsNotNone(generation.outputs.get("pass2_raw_png"))
+        with Image.open(io.BytesIO(generation.outputs["pass1_raw_png"])) as img1:
+            self.assertEqual(img1.convert("RGB").getpixel((0, 0)), (255, 0, 0))
+        with Image.open(io.BytesIO(generation.outputs["pass2_raw_png"])) as img2:
+            self.assertEqual(img2.convert("RGB").getpixel((0, 0)), (0, 0, 255))
+
+    def test_single_pass_records_pass1_raw_and_no_pass2_raw(self):
+        upstream = FakeUpstream(image_response("blue"))
+        generation = run_generation(pr.generate(
+            self.base_config(passes=1), source_png(), upstream))
+
+        self.assertIsNotNone(generation.outputs.get("pass1_raw_png"))
+        self.assertIsNone(generation.outputs.get("pass2_raw_png"))
+        with Image.open(io.BytesIO(generation.outputs["pass1_raw_png"])) as img1:
+            self.assertEqual(img1.convert("RGB").getpixel((0, 0)), (0, 0, 255))
+
     def test_phase_order_matches_the_stepper(self):
         upstream = FakeUpstream(image_response("red"), image_response("blue"))
         events = []
@@ -156,6 +177,8 @@ class LocalOnlyTest(unittest.TestCase):
         ))
         self.assertEqual(upstream.payloads, [])
         self.assertTrue(set(events) <= set(pr.STAGES_LOCAL))
+        self.assertIsNone(generation.outputs.get("pass1_raw_png"))
+        self.assertIsNone(generation.outputs.get("pass2_raw_png"))
         with Image.open(io.BytesIO(generation.outputs["pixel_png"])) as pixel:
             self.assertEqual(pixel.size, (4, 4))
 

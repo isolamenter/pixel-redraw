@@ -18,7 +18,7 @@ import { pushError, report } from './errors.js';
 import { cancelBtn, indetEl, indetLbl, renderStepper, setStatus, updateGenerateEnabled, upbarEl } from './stepper.js';
 import { paletteForRequest } from './palette.js';
 import { blobToBase64 } from './image.js';
-import { finishRun, renderIntermediate, revokeResultUrls } from './results.js';
+import { finishRun, renderPass1Raw, renderPass2Raw, revokeResultUrls } from './results.js';
 import { settings, upstreamBlock, upstreamReady } from './settings.js';
 
 /* 运行时要加载的 Python 源码。零构建：这些文件由站点当静态文件发出，
@@ -200,6 +200,16 @@ function onDone(envelope) {
 
   var result = envelope.result;
   if (result.raw_png) S.lastResultRawB64 = result.raw_png;
+  if (result.pass1_raw_png) {
+    S.lastResultPass1RawB64 = result.pass1_raw_png;
+  } else if (S.lastResultSource !== "repixelize") {
+    S.lastResultPass1RawB64 = null;
+  }
+  if (result.pass2_raw_png) {
+    S.lastResultPass2RawB64 = result.pass2_raw_png;
+  } else if (S.lastResultSource !== "repixelize") {
+    S.lastResultPass2RawB64 = null;
+  }
   if (result.draft_png) {
     S.lastResultDraftB64 = result.draft_png;
   } else if (S.lastResultSource !== "repixelize") {
@@ -212,6 +222,8 @@ function onDone(envelope) {
   }
   revokeResultUrls();
 
+  var pass1RawB64 = result.pass1_raw_png || (S.lastResultSource === "repixelize" ? S.lastResultPass1RawB64 : null);
+  var pass2RawB64 = result.pass2_raw_png || (S.lastResultSource === "repixelize" ? S.lastResultPass2RawB64 : null);
   var draftB64 = result.draft_png || (S.lastResultSource === "repixelize" ? S.lastResultDraftB64 : null);
   var guideB64 = result.guide_png || (S.lastResultSource === "repixelize" ? S.lastResultGuideB64 : null);
 
@@ -219,11 +231,15 @@ function onDone(envelope) {
     pixel: URL.createObjectURL(b64ToBlob(result.pixel_png, "image/png")),
     preview: URL.createObjectURL(b64ToBlob(result.preview_png, "image/png")),
     raw: (result.raw_png || S.lastResultRawB64) ? URL.createObjectURL(b64ToBlob(result.raw_png || S.lastResultRawB64, result.raw_mime || "image/png")) : null,
+    pass1_raw: pass1RawB64 ? URL.createObjectURL(b64ToBlob(pass1RawB64, result.pass1_raw_mime || "image/png")) : null,
+    pass2_raw: pass2RawB64 ? URL.createObjectURL(b64ToBlob(pass2RawB64, result.pass2_raw_mime || "image/png")) : null,
     draft: draftB64 ? URL.createObjectURL(b64ToBlob(draftB64, "image/png")) : null,
     guide: guideB64 ? URL.createObjectURL(b64ToBlob(guideB64, "image/png")) : null
   };
   S.objectUrls.push(urls.pixel, urls.preview);
   if (urls.raw) S.objectUrls.push(urls.raw);
+  if (urls.pass1_raw) S.objectUrls.push(urls.pass1_raw);
+  if (urls.pass2_raw) S.objectUrls.push(urls.pass2_raw);
   if (urls.draft) S.objectUrls.push(urls.draft);
   if (urls.guide) S.objectUrls.push(urls.guide);
 
@@ -235,6 +251,8 @@ function onDone(envelope) {
       palette_used: result.report.palette_used,
       color_count: result.report.color_count,
       has_raw: !!(result.raw_png || S.lastResultRawB64),
+      has_pass1_raw: !!urls.pass1_raw,
+      has_pass2_raw: !!urls.pass2_raw,
       refinement_applied: result.refinement_applied !== undefined ? result.refinement_applied : !!draftB64,
       draft_size: result.draft_size || (draftB64 ? result.report.size : null),
       guide_size: result.guide_size || null,
@@ -423,7 +441,10 @@ export function resetRunUI(isRepixelize) {
   upbarEl.hidden = true;
   if (!isRepixelize) {
     S.lastResultDraftB64 = null;
-    renderIntermediate({ urls: { draft: null } });   // 上一次的中间图不能留在新一跑里
+    S.lastResultPass1RawB64 = null;
+    S.lastResultPass2RawB64 = null;
+    renderPass1Raw({ urls: {} });
+    renderPass2Raw({ urls: {} });
   }
   addTimeline("-", "start", isRepixelize ? "开始本地重渲染" : "开始运行",
     { size: S.size, palette: paletteForRequest(), max_colors: S.maxColors,

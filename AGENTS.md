@@ -84,3 +84,7 @@ node tools/browser-smoke.mjs
    - 运行源码语法编译检查：`python3 -m py_compile ...`
 6. **Update Docs (同步文档)**：
    - 若功能行为或架构边界发生演进，同步更新 `docs/specs/`、`docs/decisions/` 或 `ARCHITECTURE.md`，保持全套文档与代码实际状态完全一致。
+7. **Deploy & Push (默认交付与本地部署)**：
+   - 验证通过后，默认执行 Git commit 与 push 到远端仓库（`git push origin main`）。
+   - 默认执行本地 Docker 重新构建与部署：`docker compose up -d --build`。
+   - 验证容器状态为 healthy，使用户在 `http://localhost:8080` 即刻访问最新版本。

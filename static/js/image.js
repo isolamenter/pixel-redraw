@@ -4,6 +4,8 @@ import { $, addTimeline, clear, el, fmtBytes, json, note, num } from './dom.js';
 import { pushError, report } from './errors.js';
 import { updateGenerateEnabled } from './stepper.js';
 
+import { refreshSizesOutput, updateSpecSummary } from './palette.js';
+
 export var dropEl = $("#drop");
 
 export function readDimensions(buf) {
@@ -68,7 +70,6 @@ export function verdictOnDimensions(w, h, src) {
   var maxDim = (S.meta && S.meta.max_dimension) || 4096;
   var maxPix = (S.meta && S.meta.max_image_pixels) || 16000000;
   if (w > maxDim || h > maxDim || w * h > maxPix) {
-    /* 与服务的措辞保持一致，方便对照日志；服务端实测数字见 CONTRACT.md 第 12 条 */
     return {
       kind: "limits", where: "client_precheck", phase: "received",
       message: "Image is " + w + "x" + h + " (" + num(w * h) + " pixels); the limit is " +
@@ -102,9 +103,6 @@ export function acceptFile(file, source) {
       return;
     }
 
-    /* 关键：先读容器头判断像素数，再 createImageBitmap。
-       实测 12000x12000 的 PNG 只有 450KB，却能解码成 144MP / 约 585MB 峰值内存、耗时 172ms
-       —— 一旦解码就没有便宜的回退路径了。 */
     file.slice(0, Math.min(file.size, 262144)).arrayBuffer().then(function (buf) {
       var dim = null;
       try { dim = readDimensions(buf); } catch (e) { dim = null; }
@@ -117,52 +115,133 @@ export function acceptFile(file, source) {
         addTimeline("-", "precheck", "无法解析容器头，跳过尺寸预检（解码后再校验）",
           { name: file.name || "", type: file.type }, null, "note");
       }
-      return decodeAndCrop(file, source, dim);
+      return decodeAndStore(file, source, dim);
     }).catch(function (e) { report(e, "acceptFile/header"); });
   } catch (e) { report(e, "acceptFile"); }
 }
 
-export function decodeAndCrop(file, source, dim) {
+export function decodeAndStore(file, source, dim) {
   return createImageBitmap(file).then(function (bmp) {
     var w = bmp.width, h = bmp.height;
     var bad = verdictOnDimensions(w, h, source + " / decoded");
     if (bad) { if (bmp.close) bmp.close(); pushError(bad, { source: source }); return; }
-    /* 保留原图比例，服务端会以 256×256 为基准计算实际输出网格。
-       这里不缩放、不裁剪，canvas 只用于把 GIF/HEIC 等统一编码成 PNG。 */
-    var cv = document.createElement("canvas");
-    cv.width = w; cv.height = h;
-    var ctx = cv.getContext("2d");
-    ctx.imageSmoothingEnabled = false;
-    ctx.drawImage(bmp, 0, 0, w, h);
-    if (bmp.close) bmp.close();
-    return new Promise(function (resolve) {
-      cv.toBlob(function (blob) {
-        if (!blob) {
-          pushError({ kind: "frontend", where: "canvas.toBlob", message: "canvas.toBlob 返回 null",
-            hint: "浏览器无法编码 PNG；换一个浏览器或换一张图。" }, { source: source });
-          return;
-        }
-        /* base64 会膨胀 4/3。这里量的是「即将发给模型端点的 inline_data 有多大」——
-           以前它对齐的是服务端的 12 MiB body 上限，现在没有那个上限了，但一张
-           编码后几十 MB 的图会让请求慢得离谱、上游也可能直接拒收，所以仍然先量一遍。 */
-        var b64len = Math.ceil(blob.size / 3) * 4;
-        var maxBytes = (S.meta && S.meta.max_upload_bytes) || 12582912;
-        if (b64len + 512 > maxBytes) {
-          pushError({ kind: "limits", where: "client_precheck", phase: "encoding",
-            message: "Preserved-aspect PNG encodes to " + num(b64len) + " bytes of base64; the limit is " +
-                     num(maxBytes) + " bytes",
-            detail: "保留比例 " + w + "x" + h + "，PNG " + fmtBytes(blob.size) + "。",
-            hint: "base64 会膨胀 4/3。请先缩小或压缩图片（例如转成 JPEG，或降低分辨率）。",
-            http_status: null }, { source: source });
-          return;
-        }
-        S.uploadBlob = blob;
-        S.uploadInfo = { ow: w, oh: h, w: w, h: h, srcBytes: file.size, encBytes: blob.size };
-        S.uploadName = file.name || (source + "-image");
-        renderUploadInfo(source);
-        resolve(blob);
-      }, "image/png");
+
+    if (S.uploadSourceBitmap && S.uploadSourceBitmap.close) {
+      try { S.uploadSourceBitmap.close(); } catch (e) {}
+    }
+    S.uploadSourceBitmap = bmp;
+    S.uploadOriginalFile = file;
+    S.uploadSource = source;
+    S.uploadName = file.name || (source + "-image");
+
+    return applyScaleAndEncode(S.inputScale || "original", source);
+  });
+}
+
+export function applyScaleAndEncode(scaleKey, source) {
+  if (!S.uploadSourceBitmap) return Promise.resolve(null);
+  var bmp = S.uploadSourceBitmap;
+  var ow = bmp.width, oh = bmp.height;
+  var tw = ow, th = oh;
+
+  if (scaleKey && scaleKey !== "original") {
+    var maxDim = parseInt(scaleKey, 10);
+    if (maxDim > 0) {
+      var ratio = Math.min(1.0, maxDim / Math.max(ow, oh));
+      tw = Math.max(1, Math.round(ow * ratio));
+      th = Math.max(1, Math.round(oh * ratio));
+    }
+  }
+
+  var cv = document.createElement("canvas");
+  cv.width = tw; cv.height = th;
+  var ctx = cv.getContext("2d");
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = "high";
+  ctx.drawImage(bmp, 0, 0, tw, th);
+
+  return new Promise(function (resolve) {
+    cv.toBlob(function (blob) {
+      if (!blob) {
+        pushError({ kind: "frontend", where: "canvas.toBlob", message: "canvas.toBlob 返回 null",
+          hint: "浏览器无法编码 PNG；换一个浏览器或换一张图。" }, { source: source });
+        return;
+      }
+      var b64len = Math.ceil(blob.size / 3) * 4;
+      var maxBytes = (S.meta && S.meta.max_upload_bytes) || 12582912;
+      if (b64len + 512 > maxBytes) {
+        pushError({ kind: "limits", where: "client_precheck", phase: "encoding",
+          message: "Preserved-aspect PNG encodes to " + num(b64len) + " bytes of base64; the limit is " +
+                   num(maxBytes) + " bytes",
+          detail: "保留比例 " + tw + "x" + th + "，PNG " + fmtBytes(blob.size) + "。",
+          hint: "base64 会膨胀 4/3。请先缩小或压缩图片（例如降低分辨率档位）。",
+          http_status: null }, { source: source });
+        return;
+      }
+
+      S.uploadBlob = blob;
+      S.inputScale = scaleKey;
+      var srcBytes = S.uploadOriginalFile ? S.uploadOriginalFile.size : blob.size;
+      S.uploadInfo = { ow: ow, oh: oh, w: tw, h: th, srcBytes: srcBytes, encBytes: blob.size, scale: scaleKey };
+
+      renderUploadInfo(source || S.uploadSource || "upload");
+      renderScalePills();
+      refreshSizesOutput();
+      updateSpecSummary();
+      updateGenerateEnabled();
+
+      addTimeline("-", "input", "已处理图片（" + (scaleKey === "original" ? "原图" : scaleKey + "档") + "）",
+        { original: ow + "x" + oh, scaled: tw + "x" + th, bytes: blob.size }, null, "info");
+
+      resolve(blob);
+    }, "image/png");
+  });
+}
+
+export function renderScalePills() {
+  var box = $("#scale-pills");
+  if (!box) return;
+  clear(box);
+  var options = S.inputScaleOptions || [
+    { key: "original", label: "原图" },
+    { key: "1024", label: "1024 边长" },
+    { key: "512", label: "512 边长" },
+    { key: "256", label: "256 边长" },
+    { key: "128", label: "128 边长" }
+  ];
+
+  var hasBmp = !!S.uploadSourceBitmap;
+  var ow = hasBmp ? S.uploadSourceBitmap.width : 0;
+  var oh = hasBmp ? S.uploadSourceBitmap.height : 0;
+
+  options.forEach(function (opt) {
+    var btn = el("button", {
+      type: "button",
+      class: "scale-pill" + (S.inputScale === opt.key ? " active" : ""),
+      "data-key": opt.key
     });
+
+    var dimStr = "—";
+    if (hasBmp) {
+      if (opt.key === "original") {
+        dimStr = ow + "×" + oh;
+      } else {
+        var maxDim = parseInt(opt.key, 10);
+        var ratio = Math.min(1.0, maxDim / Math.max(ow, oh));
+        var tw = Math.max(1, Math.round(ow * ratio));
+        var th = Math.max(1, Math.round(oh * ratio));
+        dimStr = tw + "×" + th;
+      }
+    }
+
+    btn.appendChild(el("span", { class: "p-name", text: opt.label }));
+    btn.appendChild(el("span", { class: "p-dim", text: dimStr }));
+
+    btn.addEventListener("click", function () {
+      if (S.inputScale === opt.key) return;
+      applyScaleAndEncode(opt.key, "scale-pill");
+    });
+    box.appendChild(btn);
   });
 }
 
@@ -170,39 +249,106 @@ export function renderUploadInfo(source) {
   var box = $("#upload-info");
   clear(box);
   if (S.uploadThumbUrl) { try { URL.revokeObjectURL(S.uploadThumbUrl); } catch (e) {} S.uploadThumbUrl = null; }
-  if (!S.uploadBlob) { box.hidden = true; return; }
+  if (!S.uploadBlob) {
+    box.hidden = true;
+    dropEl.hidden = false;
+    return;
+  }
   var info = S.uploadInfo;
   var url = URL.createObjectURL(S.uploadBlob);
   S.uploadThumbUrl = url;
-  box.appendChild(el("img", { src: url, alt: "保留比例的上传图预览" }));
-  box.appendChild(el("div", {}, [
-    el("div", { text: "已就绪（来源：" + source + "）" }),
-    el("div", { class: "kv", text: "原始 " + info.ow + "×" + info.oh + "（" + fmtBytes(info.srcBytes) +
-      "）→ 保留比例 " + info.w + "×" + info.h + "（PNG " + fmtBytes(info.encBytes) + "）" }),
-    el("div", { class: "kv", text: "上传后 base64 约 " + fmtBytes(Math.ceil(info.encBytes / 3) * 4) })
-  ]));
+
+  dropEl.hidden = true;
+
+  var prevWrap = el("div", { class: "upload-card-preview" }, [
+    el("img", { src: url, alt: "输入源图清晰预览" })
+  ]);
+
+  var isScaled = (info.w !== info.ow || info.h !== info.oh);
+  var dimText = isScaled
+    ? "等比缩放 " + info.w + "×" + info.h + "（PNG " + fmtBytes(info.encBytes) + "）"
+    : "保留原图 " + info.w + "×" + info.h + "（PNG " + fmtBytes(info.encBytes) + "）";
+
+  var metaWrap = el("div", { class: "upload-card-meta" }, [
+    el("div", { class: "row-tight", style: "justify-content:space-between" }, [
+      el("span", { class: "badge-ok", text: "已就绪 (" + source + ")" }),
+      el("span", { class: "tiny dim", text: S.uploadName || "" })
+    ]),
+    el("div", { class: "kv", text: "原始尺寸：" + info.ow + "×" + info.oh + "（" + fmtBytes(info.srcBytes) + "）" }),
+    el("div", { class: "kv", text: dimText }),
+    el("div", { class: "kv", text: "Base64 约 " + fmtBytes(Math.ceil(info.encBytes / 3) * 4) })
+  ]);
+
+  var actWrap = el("div", { class: "upload-card-actions" });
+  var reselectLabel = el("label", {
+    for: "file-input",
+    class: "btn btn-sm",
+    style: "cursor:pointer",
+    text: "更换图片"
+  });
+  var clearBtn = el("button", {
+    type: "button",
+    class: "btn btn-sm btn-danger",
+    text: "清除图片"
+  });
+  clearBtn.addEventListener("click", clearUploadedImage);
+
+  actWrap.appendChild(reselectLabel);
+  actWrap.appendChild(clearBtn);
+  metaWrap.appendChild(actWrap);
+
+  box.appendChild(prevWrap);
+  box.appendChild(metaWrap);
   box.hidden = false;
-  $("#clear-file").disabled = false;
+
+  var clearGlobal = $("#clear-file");
+  if (clearGlobal) clearGlobal.disabled = false;
   $("#generate-why").textContent = "";
   updateGenerateEnabled();
-  addTimeline("-", "input", "已接受图片（" + source + "）",
-    { original: info.ow + "x" + info.oh, preserved: info.w + "x" + info.h, bytes: info.encBytes }, null, "info");
+}
+
+export function clearUploadedImage() {
+  if (S.uploadSourceBitmap && S.uploadSourceBitmap.close) {
+    try { S.uploadSourceBitmap.close(); } catch (e) {}
+  }
+  S.uploadSourceBitmap = null;
+  S.uploadOriginalFile = null;
+  S.uploadBlob = null;
+  S.uploadInfo = null;
+  S.uploadName = "";
+  if (S.uploadThumbUrl) { try { URL.revokeObjectURL(S.uploadThumbUrl); } catch (e) {} S.uploadThumbUrl = null; }
+
+  var box = $("#upload-info");
+  clear(box);
+  box.hidden = true;
+  dropEl.hidden = false;
+
+  var clearGlobal = $("#clear-file");
+  if (clearGlobal) clearGlobal.disabled = true;
+
+  renderScalePills();
+  refreshSizesOutput();
+  updateSpecSummary();
+  updateGenerateEnabled();
 }
 
 /* 三条输入路径：拖拽、粘贴、文件选择器。 */
 export function wireImageInput() {
+  renderScalePills();
+
+  var leftBox = $("#input-spec-left") || dropEl;
   ["dragenter", "dragover"].forEach(function (ev) {
-    dropEl.addEventListener(ev, function (e) {
-      e.preventDefault();                 /* 不 preventDefault，浏览器会直接打开这张图 */
+    leftBox.addEventListener(ev, function (e) {
+      e.preventDefault();
       e.stopPropagation();
       dropEl.classList.add("over");
       if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
     });
   });
   ["dragleave", "dragend"].forEach(function (ev) {
-    dropEl.addEventListener(ev, function () { dropEl.classList.remove("over"); });
+    leftBox.addEventListener(ev, function () { dropEl.classList.remove("over"); });
   });
-  dropEl.addEventListener("drop", function (e) {
+  leftBox.addEventListener("drop", function (e) {
     e.preventDefault();
     e.stopPropagation();
     dropEl.classList.remove("over");
@@ -218,7 +364,6 @@ export function wireImageInput() {
     var cd = e.clipboardData;
     if (!cd) return;
     var file = null;
-    /* items 与 files 在不同引擎下填的东西不一样（截图粘贴尤其），两个都查 */
     if (cd.items && cd.items.length) {
       for (var i = 0; i < cd.items.length; i++) {
         var it = cd.items[i];
@@ -233,7 +378,7 @@ export function wireImageInput() {
         if (cd.files[j].type && cd.files[j].type.indexOf("image/") === 0) { file = cd.files[j]; break; }
       }
     }
-    if (!file) return;                  /* 没有图片就完全不干预，正常文本粘贴照旧 */
+    if (!file) return;
     e.preventDefault();
     acceptFile(file, "paste");
   });
@@ -243,13 +388,11 @@ export function wireImageInput() {
     if (f) acceptFile(f, "picker");
     e.target.value = "";
   });
-  $("#clear-file").addEventListener("click", function () {
-    S.uploadBlob = null; S.uploadInfo = null;
-    $("#upload-info").hidden = true;
-    $("#upload-info").textContent = "";
-    $("#clear-file").disabled = true;
-    updateGenerateEnabled();
-  });
+
+  var clearGlobal = $("#clear-file");
+  if (clearGlobal) {
+    clearGlobal.addEventListener("click", clearUploadedImage);
+  }
 }
 
 export function blobToBase64(blob) {

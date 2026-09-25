@@ -35,6 +35,8 @@ export function normalizeResult(container) {
     color_count: colors,
     elapsed_s: (typeof r.elapsed_s === "number") ? r.elapsed_s : null,
     has_raw: !!r.has_raw,
+    has_pass1_raw: !!(r.has_pass1_raw || urls.pass1_raw),
+    has_pass2_raw: !!(r.has_pass2_raw || urls.pass2_raw),
     refinement_applied: !!r.refinement_applied,
     reducer: report.reducer || null,
     mean_vote_confidence: report.mean_vote_confidence !== undefined ? report.mean_vote_confidence : null,
@@ -50,7 +52,9 @@ export function normalizeResult(container) {
       draft: urls.draft || null,
       pixel: urls.pixel || null,
       preview: urls.preview || null,
-      raw: urls.raw || null
+      raw: urls.raw || null,
+      pass1_raw: urls.pass1_raw || null,
+      pass2_raw: urls.pass2_raw || null
     }
   };
 }
@@ -162,7 +166,8 @@ export function renderResult(res) {
     $("#cap-logical").textContent = "—";
   }
 
-  renderIntermediate(res);
+  renderPass1Raw(res);
+  renderPass2Raw(res);
 
   if (!res.urls.pixel) {
     stage.appendChild(el("span", { class: "stage-empty", text: "服务端没有给出图片地址。" }));
@@ -188,7 +193,6 @@ export function renderResult(res) {
     applyZoom();
   }).catch(function (e) { report(e, "preview fetch"); });
 
-  renderRaw(res);
   renderDownloads(res);
   renderPaletteEcho(res);
   renderResultNotes(res);
@@ -204,37 +208,65 @@ export function renderResult(res) {
   renderCopyTarget();
 }
 
-export function renderIntermediate(res) {
-  var wrap = $("#draft-wrap"), stage = $("#stage-draft");
+export function renderPass1Raw(res) {
+  var wrap = $("#pass1-raw-wrap"), stage = $("#stage-pass1-raw");
   clear(stage);
-  var guideUrl = res.urls.guide || res.urls.draft;
-  if (!guideUrl) {
+  if (!res || !res.urls || !res.urls.pass1_raw) {
     wrap.hidden = false;
-    stage.appendChild(el("span", { class: "stage-empty", text: "本次运行未生成参考 Guide。" }));
+    var msg = S.pixelizeOnly ? "仅本地渲染：未调用模型。" : "等待 Pass 1 AI 输出…";
+    stage.appendChild(el("span", { class: "stage-empty", text: msg }));
     syncAiRowLayout();
+    setActionLink($("#pass1-raw-open"), null);
     return;
   }
   wrap.hidden = false;
   syncAiRowLayout();
-  var size = res.guide_size || res.draft_size || res.size;
-  var img = el("img", { alt: "Pass 1 自适应参考 Guide" });
-  if (size && size.length >= 2) {
-    img.width = size[0];
-    img.height = size[1];
-    img.dataset.logicalWidth = String(size[0]);
-    img.dataset.logicalHeight = String(size[1]);
-  }
+  setActionLink($("#pass1-raw-open"), res.urls.pass1_raw);
+  var img = el("img", { alt: "Pass 1 AI 原始输出" });
+  stage.appendChild(img);
   img.addEventListener("error", function () {
     wrap.hidden = false;
     clear(stage);
-    stage.appendChild(el("span", { class: "stage-empty", text: "参考 Guide 暂时无法读取。" }));
+    stage.appendChild(el("span", { class: "stage-empty", text: "Pass 1 原始输出暂时无法读取。" }));
     syncAiRowLayout();
-    addTimeline("-", "guide", "参考 Guide 取不到——保留占位区",
-      { url: guideUrl }, null, "note");
+    setActionLink($("#pass1-raw-open"), null);
+    addTimeline("-", "pass1_raw", "Pass 1 原始输出读取失败",
+      { url: res.urls.pass1_raw }, null, "note");
   });
+  img.src = res.urls.pass1_raw;
+}
+
+export function renderPass2Raw(res) {
+  var wrap = $("#pass2-raw-wrap"), stage = $("#stage-pass2-raw");
+  clear(stage);
+  if (!res || !res.urls || !res.urls.pass2_raw) {
+    wrap.hidden = false;
+    var msg = "等待 Pass 2 AI 输出…";
+    if (S.pixelizeOnly) {
+      msg = "仅本地渲染：未调用模型。";
+    } else if (res && res.refinement_applied === false) {
+      msg = "单轮生成或精修未执行。";
+    }
+    stage.appendChild(el("span", { class: "stage-empty", text: msg }));
+    syncAiRowLayout();
+    setActionLink($("#pass2-raw-open"), null);
+    return;
+  }
+  wrap.hidden = false;
+  syncAiRowLayout();
+  setActionLink($("#pass2-raw-open"), res.urls.pass2_raw);
+  var img = el("img", { alt: "Pass 2 AI 原始输出" });
   stage.appendChild(img);
-  img.src = guideUrl;
-  applyIntermediateZoom();
+  img.addEventListener("error", function () {
+    wrap.hidden = false;
+    clear(stage);
+    stage.appendChild(el("span", { class: "stage-empty", text: "Pass 2 原始输出暂时无法读取。" }));
+    syncAiRowLayout();
+    setActionLink($("#pass2-raw-open"), null);
+    addTimeline("-", "pass2_raw", "Pass 2 原始输出读取失败",
+      { url: res.urls.pass2_raw }, null, "note");
+  });
+  img.src = res.urls.pass2_raw;
 }
 
 export function syncAiRowLayout() {
@@ -243,61 +275,12 @@ export function syncAiRowLayout() {
   row.classList.remove("has-two");
 }
 
-export function integerFitScale(stage, width, height) {
-  var availableWidth = Math.max(1, stage.clientWidth - 16);
-  var availableHeight = Math.max(1, stage.clientHeight - 16);
-  return Math.max(1, Math.min(32, Math.floor(Math.min(
-    availableWidth / width, availableHeight / height
-  ))));
-}
-
-export function applyIntermediateZoom() {
-  var stage = $("#stage-draft"), img = stage.querySelector("img");
-  if (!img) return;
-  var width = parseInt(img.dataset.logicalWidth || "", 10);
-  var height = parseInt(img.dataset.logicalHeight || "", 10);
-  if (!width || !height) return;
-  var scale = integerFitScale(stage, width, height);
-  img.style.width = (width * scale) + "px";
-  img.style.height = (height * scale) + "px";
-}
-
 export function fetchBlob(url) {
   if (!url) return Promise.resolve(null);
   return fetch(url, { cache: "no-store" }).then(function (r) {
     if (!r.ok) throw new Error("GET " + url + " → HTTP " + r.status);
     return r.blob();
   });
-}
-
-export function renderRaw(res) {
-  var wrap = $("#raw-wrap"), stage = $("#stage-raw");
-  clear(stage);
-  /* 服务端没有保留 raw 时仍保留固定结果槽位，用说明替代碎图标；
-     keep_raw 由 .env / 命令行决定，客户端不假设。 */
-  if (!res.has_raw || !res.urls.raw) {
-    wrap.hidden = false;
-    stage.appendChild(el("span", { class: "stage-empty", text: "服务端未保留原始输出。" }));
-    syncAiRowLayout();
-    setActionLink($("#raw-open"), null);
-    return;
-  }
-  wrap.hidden = false;
-  syncAiRowLayout();
-  setActionLink($("#raw-open"), res.urls.raw);
-  var img = el("img", { alt: "模型原始输出" });
-  stage.appendChild(img);
-  img.addEventListener("error", function () {
-    /* has_raw 为真也可能 404（例如 .env 变了）：这里退化成一句说明，而不是一个碎图标 */
-    wrap.hidden = false;
-    clear(stage);
-    stage.appendChild(el("span", { class: "stage-empty", text: "原始输出暂时无法读取。" }));
-    syncAiRowLayout();
-    setActionLink($("#raw-open"), null);
-    addTimeline("-", "raw", "raw.png 取不到（404）——保留原始输出占位区",
-      { url: res.urls.raw }, null, "note");
-  });
-  img.src = res.urls.raw;
 }
 
 export function renderDownloads(res) {
@@ -309,18 +292,16 @@ export function renderDownloads(res) {
      用户在一个下载目录里能直接对上是哪张图。 */
   var stem = String(res.sourceName || "pixel").replace(/\.[^.]+$/, "");
   var base = stem || "pixel";
-  var draftSize = res.draft_size || res.size || [S.size, S.size];
-  setActionLink($("#download-draft"), res.urls.draft,
-    base + "_draft_" + draftSize[0] + "x" + draftSize[1] + ".png",
-    "下载首轮量化中间图");
+  setActionLink($("#download-pass1-raw"), res.urls.pass1_raw,
+    base + "_pass1_raw.png", "下载 Pass 1 原始输出");
+  setActionLink($("#download-pass2-raw"), res.urls.pass2_raw,
+    base + "_pass2_raw.png", "下载 Pass 2 原始输出");
   setActionLink($("#download-pixel"), res.urls.pixel,
     base + "_" + n + "x" + h + "_" + colors + "c.png",
     "下载 logical PNG");
   setActionLink($("#download-preview"), res.urls.preview,
     base + "_" + n + "x" + h + "_" + colors + "c_x" + (res.scale || "N") + ".png",
     "下载 nearest 放大预览");
-  setActionLink($("#download-raw"), res.has_raw ? res.urls.raw : null,
-    base + "_raw.png", "下载模型原始输出");
 }
 
 export function renderPaletteEcho(res) {
