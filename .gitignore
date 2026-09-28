@@ -11,3 +11,5 @@ tools/package-lock.json
 
 .DS_Store
 .env
+.dev.vars
+dist/

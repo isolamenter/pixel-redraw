@@ -532,7 +532,6 @@ main{
   grid-template-columns:repeat(3,minmax(0,1fr));
   grid-template-areas:
     "hero hero hero"
-    "config config config"
     "spec spec generation"
     "palette palette generation"
     "palette palette console"
@@ -747,7 +746,6 @@ legend{ margin-bottom:8px; padding:0; font:700 11px/1.3 var(--mono); text-transf
     grid-template-columns:minmax(270px,330px) minmax(0,1fr);
     grid-template-areas:
       "hero hero"
-      "config config"
       "spec spec"
       "palette palette"
       "generation console"
@@ -766,7 +764,7 @@ legend{ margin-bottom:8px; padding:0; font:700 11px/1.3 var(--mono); text-transf
 @media (max-width:700px){
   main{
     grid-template-columns:minmax(0,1fr);
-    grid-template-areas:"hero" "config" "spec" "palette" "generation" "result" "console" "footer";
+    grid-template-areas:"hero" "spec" "palette" "generation" "result" "console" "footer";
   }
   .hero{ display:block; min-height:166px; }
   .hero-copy{ display:flex; padding:20px; min-height:78px; }
@@ -795,43 +793,4 @@ legend{ margin-bottom:8px; padding:0; font:700 11px/1.3 var(--mono); text-transf
 }
 @media (prefers-reduced-motion:reduce){
   *,*:before,*:after{ animation-duration:.01ms !important; animation-iteration-count:1 !important; transition-duration:.01ms !important; scroll-behavior:auto !important; }
-}
-/* =====================================================================
-   凭据与模型：这是本次重构新增的一整块，因为密钥与模型从服务端环境变量
-   变成了用户在这个页面里填。它占一整条横带，是大多数用户第一件要做的事。
-   ===================================================================== */
-.config-panel{ grid-area:config; }
-.config-grid{
-  display:grid;
-  gap:12px;
-  grid-template-columns:minmax(200px,1.1fr) minmax(220px,1.4fr);
-  align-items:start;
-}
-.config-grid .field{ display:flex; flex-direction:column; gap:5px; min-width:0; }
-.config-grid .field.span2{ grid-column:1 / -1; }
-.config-panel input[type=text],
-.config-panel input[type=password],
-.config-panel input[type=number],
-.config-panel select,
-.config-panel textarea{
-  width:100%;
-  font:inherit;
-  padding:7px 9px;
-  border:1px solid var(--border);
-  border-radius:6px;
-  background:var(--panel);
-  color:inherit;
-}
-.config-panel textarea{ min-height:74px; resize:vertical; font-family:var(--mono); font-size:12px; }
-.config-panel details{ grid-column:1 / -1; border-top:1px dashed var(--border); padding-top:10px; }
-.config-panel summary{ cursor:pointer; font-size:12px; letter-spacing:.04em; text-transform:uppercase; color:var(--fg-dim); }
-.config-panel details .config-grid{ margin-top:12px; }
-.remember-row{
-  display:flex; align-items:center; gap:8px; flex-wrap:wrap;
-  grid-column:1 / -1;
-}
-.key-state{ font-size:12px; }
-.key-state.warn{ color:var(--warn); }
-@media (max-width:700px){
-  .config-grid{ grid-template-columns:minmax(0,1fr); }
 }

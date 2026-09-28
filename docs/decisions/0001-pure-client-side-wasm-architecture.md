@@ -1,5 +1,7 @@
 # 1. 采用纯客户端 WASM 无后端架构
 
+> 演进说明：客户端像素处理决策仍有效。Gemini Key 与上游请求路径已由 [ADR 0005](0005-cloudflare-gemini-secret-proxy.md) 改为 Pages Function 服务端代理。
+
 - **状态**: Accepted
 - **日期**: 2026-09-20 (从初始提交及配置确认)
 - **决定者**: 核心架构设计

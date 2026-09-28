@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="light dark">
-<title>pixel-redraw 内网工作台</title>
+<title>Pixel Lab — AI Pixel Redraw</title>
 <link rel="stylesheet" href="app.css">
 </head>
 <body>
@@ -32,74 +32,6 @@
       <div class="hero-glyph">▚</div>
       <div class="hero-label">256 / REF GRID</div>
       <div class="hero-corner">LOCAL RENDER</div>
-    </div>
-  </section>
-
-  <!-- ============ 凭据与模型 ============ -->
-  <section class="panel config-panel">
-    <h2>凭据与模型 <span class="dim tiny">只存在这个浏览器里，请求由本页直接发往你填的端点</span></h2>
-
-    <div class="config-grid">
-      <div class="field">
-        <label class="lbl" for="cfg-model">模型</label>
-        <input id="cfg-model" type="text" list="known-models" spellcheck="false"
-               autocomplete="off" placeholder="gemini-3.1-flash-image">
-        <datalist id="known-models"></datalist>
-        <span class="tiny dim">官方端点用 gemini-3.1-flash-image / gemini-3.1-flash-lite-image / gemini-3-pro-image；网关的模型名按网关自己的写。</span>
-      </div>
-
-      <div class="field">
-        <label class="lbl" for="cfg-key">API key</label>
-        <input id="cfg-key" type="password" spellcheck="false" autocomplete="off" placeholder="官方 key 或网关的 key">
-        <div class="row-tight">
-          <span class="tiny key-state" id="cfg-key-state">未填写</span>
-          <button type="button" class="btn-sm" id="cfg-clear-key">清除</button>
-        </div>
-      </div>
-
-      <div class="remember-row">
-        <input type="checkbox" id="cfg-remember">
-        <label class="lbl" for="cfg-remember">在此设备记住</label>
-        <span class="tiny dim">
-          不勾选时，key 只放在 sessionStorage，关掉标签页即失效；勾选后会写进这个浏览器的
-          localStorage，下次打开自动填上——<b>共用这台机器的人也会继承它</b>，换人用之前请点「清除」。
-        </span>
-      </div>
-
-      <details>
-        <summary>高级：端点、提示词、轮次</summary>
-        <div class="config-grid">
-          <div class="field">
-            <label class="lbl" for="cfg-base-url">端点地址（留空 = 官方端点）</label>
-            <input id="cfg-base-url" type="text" spellcheck="false" autocomplete="off"
-                   placeholder="https://generativelanguage.googleapis.com">
-            <span class="tiny dim">写根地址，<b>不要</b>带 /v1beta。填网关时要有心理准备：浏览器直连要求那个网关自己发 CORS 头，这不是本页能控制的。</span>
-          </div>
-          <div class="field">
-            <label class="lbl" for="cfg-api-version">协议版本（留空 = v1beta）</label>
-            <input id="cfg-api-version" type="text" spellcheck="false" autocomplete="off" placeholder="v1beta">
-          </div>
-          <div class="field">
-            <label class="lbl" for="cfg-timeout">超时秒数（墙钟，留空 = 180）</label>
-            <input id="cfg-timeout" type="number" min="10" step="10" placeholder="180">
-          </div>
-          <div class="field">
-            <label class="lbl" for="cfg-passes">生成轮次</label>
-            <select id="cfg-passes">
-              <option value="2">两轮（第二轮精修轮廓与色块，默认）</option>
-              <option value="1">单轮（省一半 token）</option>
-            </select>
-          </div>
-          <div class="field span2">
-            <label class="lbl" for="cfg-prompt">第一轮提示词（留空 = 内置默认；支持 {width} / {height}）</label>
-            <textarea id="cfg-prompt" spellcheck="false" placeholder="留空即使用内置提示词"></textarea>
-          </div>
-          <div class="field span2">
-            <label class="lbl" for="cfg-refine-prompt">第二轮提示词（留空 = 内置默认；支持 {width} / {height}）</label>
-            <textarea id="cfg-refine-prompt" spellcheck="false" placeholder="留空即使用内置提示词"></textarea>
-          </div>
-        </div>
-      </details>
     </div>
   </section>
 
@@ -226,6 +158,7 @@
       <button type="button" class="btn-primary" id="generate">开始生成</button>
       <button type="button" class="btn-sm" id="clear-file" disabled>清除已选图片</button>
       <span class="tiny dim" id="generate-why"></span>
+      <span class="tiny dim">默认两轮生成会调用 Gemini 两次并使用本站额度；选中的图片将发送至 Gemini 官方服务。</span>
     </div>
 
     <div class="sep"></div>
@@ -337,11 +270,8 @@
   </section>
 
   <p class="tiny dim footer-note" style="margin:16px 0 0">
-    这个页面没有后端：模型调用由本页直接发往你填的端点，像素化在你的浏览器里由 Pyodide
-    （WASM 版 CPython）+ Pillow 完成，用的是仓库里那份 <code>pixel_redraw.py</code>。
-    API key 只存在这个浏览器里（默认 sessionStorage，勾选后才写 localStorage），
-    不会发往除你填写的端点以外的任何地方。失败时上游的原始响应体会随错误一起呈现，
-    渲染前会再做一次密钥脱敏。
+    图像像素化在你的浏览器中由 Pyodide（WASM 版 CPython）+ Pillow 完成；Gemini 请求经本站转发至官方端点，
+    API Key 保存在服务端，不会发送到浏览器。你选择的图片会发送给 Google Gemini 进行生成。
   </p>
 </main>
 

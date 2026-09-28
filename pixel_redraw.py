@@ -10,12 +10,8 @@ there is no environment to read and no synchronous networking at all.
 The transport is therefore injected: `generate()` takes an async
 ``call_upstream(payload) -> response`` callback and never knows whether the
 bytes travelled over urllib, pyfetch, or a test double.  `pixel_pipeline.py`
-supplies the browser transport.
-
-Authentication is the x-goog-api-key header sent to ``Config.base_url``, which
-defaults to the official endpoint, so an AI Studio key needs no endpoint
-configured at all and any gateway speaking the same protocol works by pointing
-``base_url`` at it.
+supplies the browser-to-Pages transport; the Pages Function handles upstream
+authentication and sends the request to the official endpoint.
 """
 
 from __future__ import annotations
@@ -352,17 +348,12 @@ def make_config(
 def validate_upstream(config: Config) -> None:
     """Whether a model call can be attempted at all.
 
-    Kept separate from make_config() so the local-pixelize-only path needs no
-    credentials -- that path is how the pipeline is smoke-tested without
-    spending an API call, so it must not demand a key.
+    Authentication belongs to the injected transport. This core only requires
+    a model identifier; a transport may authenticate with a server-side secret,
+    a user key, or a test double.
     """
-    missing = [
-        name
-        for name, value in (("model", config.model), ("api key", config.api_key))
-        if not value
-    ]
-    if missing:
-        raise ConfigError("Missing " + " and ".join(missing) + ". Fill both in on the page.")
+    if not config.model:
+        raise ConfigError("Missing model.")
 
 
 def _fill_prompt(template: str, size: tuple[int, int]) -> str:

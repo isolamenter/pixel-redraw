@@ -1,8 +1,7 @@
 /* 编排：把一次运行从「用户点了生成」送到「结果画在屏幕上」。
  *
- * 这里替代的是过去的整条运行生命周期 —— POST /api/generate、SSE 事件流、
- * /state 轮询、run_id 重挂。那套东西存在的唯一理由是任务活在一个别的进程里；
- * 现在任务就在这个页面旁边的 Worker 里，一次 await 就结束了它。
+ * 图像解码与像素处理留在本页 Worker；Gemini 生成阶段通过同源 Pages Function
+ * 转发请求。运行状态和产物仍只保存在当前标签页。
  *
  * 与 Worker 的契约（见 worker.js）：
  *   → {type:'boot', indexURL, pythonFiles}
@@ -21,12 +20,12 @@ import { blobToBase64 } from './image.js';
 import { finishRun, renderPass1Raw, renderPass2Raw, revokeResultUrls } from './results.js';
 import { settings, upstreamBlock, upstreamReady } from './settings.js';
 
-/* 运行时要加载的 Python 源码。零构建：这些文件由站点当静态文件发出，
-   启动时读进 WASM 文件系统再 import —— 磁盘上的 .py 就是唯一一份，
-   不打包、不转译、不复制。
+/* 运行时要加载的 Python 源码。这些文件由 Pages 构建复制为静态文件，
+   启动时读进 WASM 文件系统再 import；仓库中的 .py 是唯一一份，
+   不转译或手工维护生成副本。
 
    路径写成站点根下的绝对路径，这样两种布局都能用：
-     · 部署（nginx 镜像）：web 根就是站点根，index.html 在 /，三个 .py 也在 /；
+     · Cloudflare Pages：构建时将 Python 源码复制到站点根目录；
      · 本地开发（仓库根起 http.server）：访问 /static/index.html，而 /pixel_redraw.py
        正好落在仓库根上，两份文件是同一次读取。
    相对的 worker 路径不受影响：它是相对文档 URL 解析的。 */
@@ -380,9 +379,9 @@ export function startGenerate() {
   if (!S.pixelizeOnly && !upstreamReady()) {
     pushError({
       kind: "config", where: "startGenerate", phase: "received",
-      message: "未填写模型名或 API key。",
-      hint: "模型与 key 都在页面左侧的「凭据」里填。只想验证尺寸和调色板的话，勾上「仅本地渲染」，" +
-            "那条路径完全在本地跑，不需要 key。"
+      message: "本站尚未配置 Gemini API Key。",
+      hint: "请在服务端环境变量中配置 GEMINI_API_KEY。只想验证尺寸和调色板的话，勾上「仅本地渲染」，" +
+            "那条路径完全在本地跑，不需要调用模型。"
     }, { source: "frontend" });
     return;
   }

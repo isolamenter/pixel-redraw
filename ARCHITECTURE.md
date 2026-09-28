@@ -1,6 +1,6 @@
 # Architecture Overview
 
-`pixel-redraw` 是一个**纯静态、无后端的 AI 像素画重绘系统**。用户在浏览器中提供 Google Gemini API Key，由浏览器直接调用大模型，并通过 Pyodide (WASM CPython) 在客户端本地完成像素化、感知调色板映射与拓扑清理。
+`pixel-redraw` 使用 **Cloudflare Pages 静态资源 + Pages Functions**。Gemini API Key 保存在服务端 Secret 中，由 Function 代理调用官方 Gemini API；Pyodide (WASM CPython) 仍在浏览器中执行图像像素化、感知调色板映射与拓扑清理。
 
 ---
 
@@ -29,14 +29,16 @@ flowchart TD
     end
 
     subgraph External ["外部与基础设施"]
-        GeminiAPI["Gemini API (generateContent)"]
+        PagesAPI["Cloudflare Pages Functions (/api/config, /api/generate)"]
+        GeminiAPI["Gemini 官方 API (generateContent)"]
         LocalPyodide["本地 WASM 运行时 (static/pyodide/)"]
     end
 
     App <-->|postMessage JSON String| Worker
     Worker -->|import| LocalPyodide
     Worker -->|import| PyPipeline
-    PyPipeline -->|pyfetch HTTP POST| GeminiAPI
+    PyPipeline -->|同源 POST，不带密钥| PagesAPI
+    PagesAPI -->|服务端 x-goog-api-key| GeminiAPI
     PyPipeline -->|调用| Redraw
     Redraw --> Reduce
     Redraw --> Palettes
@@ -52,7 +54,7 @@ flowchart TD
 |---|---|---|---|
 | **前端交互层** | [`static/index.html`](file:///Users/akiya/Project/pixel/static/index.html)<br>[`static/app.css`](file:///Users/akiya/Project/pixel/static/app.css)<br>[`static/js/app.js`](file:///Users/akiya/Project/pixel/static/js/app.js) | UI 布局、状态呈现、事件驱动、模块装配与用户交互。 | 依赖各前端功能子模块 |
 | | [`static/js/pipeline.js`](file:///Users/akiya/Project/pixel/static/js/pipeline.js) | 管理 Worker 生命周期、任务排队与进度分发。 | 依赖 `worker.js` 通信 |
-| | [`static/js/settings.js`](file:///Users/akiya/Project/pixel/static/js/settings.js) | API Key、模型等配置的本地存取及渲染层第二道脱敏。 | 无业务算法依赖 |
+| | [`static/js/settings.js`](file:///Users/akiya/Project/pixel/static/js/settings.js) | 读取公开模型元数据、检查服务端配置状态与渲染层脱敏；不保存 API Key。 | 无业务算法依赖 |
 | | [`static/js/palette.js`](file:///Users/akiya/Project/pixel/static/js/palette.js) / [`results.js`](file:///Users/akiya/Project/pixel/static/js/results.js) / [`errors.js`](file:///Users/akiya/Project/pixel/static/js/errors.js) / [`image.js`](file:///Users/akiya/Project/pixel/static/js/image.js) | 调色板选择、图像 Canvas 渲染、错误徽章呈现及诊断导出。 | 纯 UI 辅助 |
 | **WASM 边界层** | [`static/js/worker.js`](file:///Users/akiya/Project/pixel/static/js/worker.js) | 加载本地 Pyodide 运行环境（CPython 3.14+ / Pillow / NumPy）并装载 Python 脚本。 | 依赖本地 `static/pyodide/` |
 | | [`pixel_pipeline.py`](file:///Users/akiya/Project/pixel/pixel_pipeline.py) | **唯一的 Pyodide 适配模块**。提供 `web_meta()` 和 `run_pipeline()` 接口，使用 `pyodide.http.pyfetch` 进行网络传输，包装脱敏错误信封。 | 依赖 `pixel_redraw.py`, `pixel_palettes.py`, `pyodide` |
@@ -60,7 +62,8 @@ flowchart TD
 | | [`pixel_reduce.py`](file:///Users/akiya/Project/pixel/pixel_reduce.py) | **纯计算**。目标网格计算、网格相位微移对齐 (Grid Phase Alignment)、QVote (Quantize-then-Vote) 区域多数表决量化、置信度拓扑清理。 | 依赖 `pixel_color.py`, `PIL.Image`, `numpy` |
 | | [`pixel_color.py`](file:///Users/akiya/Project/pixel/pixel_color.py) | **纯计算**。`sRGB` $\leftrightarrow$ `Linear RGB` $\leftrightarrow$ `Oklab` 感知色彩转换、Oklab 最近色映射、确定性 K-Means 自动调色板生成、加权感知误差贪心剪枝子集提取 (`select_sub_palette`)。 | 依赖 `numpy` |
 | | [`pixel_palettes.py`](file:///Users/akiya/Project/pixel/pixel_palettes.py) | 15 个硬件与艺术预设调色板数据及启动时自检。 | 依赖 `pixel_redraw.py` (仅用于语法自检) |
-| **基础设施与工具** | [`deploy/nginx.conf`](file:///Users/akiya/Project/pixel/deploy/nginx.conf) / [`Dockerfile`](file:///Users/akiya/Project/pixel/Dockerfile) | 静态站部署，配置 `.wasm` / `.mjs` MIME 类型。 | 纯静态分发 |
+| **基础设施与工具** | [`functions/api/config.js`](file:///Users/akiya/Project/pixel/functions/api/config.js) / [`functions/api/generate.js`](file:///Users/akiya/Project/pixel/functions/api/generate.js) | 提供公开模型状态并将 Gemini 原生请求转发到固定官方主机；从运行时 Secret 读取 API Key，不记录请求内容。 | Cloudflare Pages Functions |
+| | [`tools/build-pages.mjs`](file:///Users/akiya/Project/pixel/tools/build-pages.mjs) / [`wrangler.jsonc`](file:///Users/akiya/Project/pixel/wrangler.jsonc) | 整理静态资源、Python 源码及 Pages Functions 部署配置。 | Cloudflare Pages |
 | | [`tools/serve.mjs`](file:///Users/akiya/Project/pixel/tools/serve.mjs) / [`tools/linkcheck.mjs`](file:///Users/akiya/Project/pixel/tools/linkcheck.mjs) | 本地开发服务器（带 `no-store` 防止缓存）及静态链接检查。 | Node.js 运行环境 |
 | | [`tests/test_core.py`](file:///Users/akiya/Project/pixel/tests/test_core.py) / [`tests/test_refactor.py`](file:///Users/akiya/Project/pixel/tests/test_refactor.py) | 核心算法单元测试、纯度契约扫描、像素化不变量验证。 | CPython 3.9+ |
 
@@ -76,7 +79,7 @@ flowchart TD
         ├─► [ 本地自适应降采样 (Auto色板 + 5档自适应密度) ] ──► [ 生成自适应参考 Guide (输出至左侧卡片) ]
         │                                                                     │
         ▼ (Pass 1: 语义构图与草稿)                                             │
-[ 组装 Prompt 1 (原图 + 自适应 Guide) ] ──► [ pyfetch POST ] ──► [ 初稿高分辨率图 Raw 1 (输出至中间卡片) ]
+[ 组装 Prompt 1 (原图 + 自适应 Guide) ] ──► [ pyfetch → Pages Function → Gemini ] ──► [ 初稿高分辨率图 Raw 1 ]
                                                                                 │
                                                                                 ▼
                                                                 [ Reducer (按用户目标色板与密度量化) ]
@@ -86,7 +89,7 @@ flowchart TD
 [ 生成目标风格草稿 (Nearest-Neighbor 放大) ]
         │
         ▼ (Pass 2: 目标风格点阵精修)
-[ 组装 Prompt 2 (目标草稿 + 原图参考) ] ──► [ Upstream HTTP POST ] ──► [ 精修高分辨率图 Raw 2 ]
+[ 组装 Prompt 2 (目标草稿 + 原图参考) ] ──► [ pyfetch → Pages Function → Gemini ] ──► [ 精修高分辨率图 Raw 2 ]
                                                                                 │
                                                         (失败时回退至首轮) ◄──────┤
                                                                                 ▼
@@ -110,10 +113,12 @@ flowchart TD
 ## 4. 架构边界与核心契约
 
 ### 4.1 纯计算契约 (Pure Compute Boundary)
-`pixel_redraw.py`、`pixel_reduce.py`、`pixel_color.py` 必须保持无副作用（不读环境变量、不访问文件系统、不持有网络套接字）。所有外部网络调用通过参数注入。该契约受 `tests/test_core.py` 源码扫描测试严格保护。
+`pixel_redraw.py`、`pixel_reduce.py`、`pixel_color.py` 必须保持无副作用（不读环境变量、不访问文件系统、不持有网络套接字）。浏览器管线通过注入的回调访问同源 API，Pages Function 负责服务端 Gemini 网络请求。该纯算法契约受 `tests/test_core.py` 源码扫描测试严格保护。
 
 ### 4.2 跨语言传输契约 (JSON String Barrier)
 JavaScript 与 Python (Pyodide) 之间传递数据时，仅传递纯文本 JSON 字符串与 Base64 图像，严禁传递复杂的 JS/Python 包装对象（`PyProxy`），从而从根源上避免内存泄漏与垃圾回收生命周期冲突。
 
 ### 4.3 凭据安全与脱敏防线 (Security Boundary)
-API Key 仅存在于用户浏览器内存或 `sessionStorage`（用户自选 `localStorage`），由 Python 侧 `to_envelope()` 与前端 `redactSecrets()` 构成双层脱敏防线，确保任何异常、traceback、页面展示与导出文件中均不含明文 Key。
+API Key 仅存在于 Cloudflare Pages Secret 与 Function 运行时内存中，绝不进入静态构建产物、Worker 请求、Python/WASM、日志或导出文件。Function 不持久化请求与响应；Python 侧 `to_envelope()` 与前端 `redactSecrets()` 继续过滤上游错误内容。
+
+上传图片及模型提示词会经本站 Function 转发到 Google Gemini；像素化仍留在用户浏览器。访客共用服务端 Key，因此每次生成会消耗该 Key 所属项目的配额。

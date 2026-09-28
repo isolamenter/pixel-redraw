@@ -34,33 +34,25 @@ export var KIND_SEV = {
   upstream_http: "err", upstream_transport: "err", upstream_timeout: "err",
   upstream_non_json: "err", upstream_protocol: "err", upstream_error_field: "err",
   no_image: "err", palette_violation: "err", internal: "err",
-  /* 服务端时代遗留的 kind 已随服务端删掉（busy / not_found / forbidden /
-     client_disconnect / request）。没列到的 kind 一律按 err（红）渲染，
-     并把 kind 原文照抄，不替上游改口。 */
+  /* 未列到的 kind 一律按 err（红）渲染，并把 kind 原文照抄。 */
   invariant: "err", frontend: "info"
 };
 
-/* kind -> 可操作建议。
-   这些提示以前由服务端下发，但服务端已经不存在了：现在的失败要么来自用户自己的
-   浏览器，要么来自用户自己填的端点，所以文案里不能再出现 .env / GEMINI_* 这类
-   只有在服务端部署里才存在的东西。 */
+/* kind -> 可操作建议。 */
 export var KIND_HINT = {
-  config: "检查页面上的模型名与 API key 是否都填了。两者缺一，都不会发起请求。",
+  config: "本站尚未配置 Gemini API Key，请检查服务端环境变量 GEMINI_API_KEY。",
   palette: "调色板写法：#RRGGBB 逗号分隔，也接受 #RGB 简写。",
   size: "密度档位只能是 8、16、32、64、128。实际输出尺寸会按原图比例和 256 基准计算。",
   limits: "图片超过了本页的限制。请先缩小图片再重新选择文件。",
   input_image: "这个文件不是可识别的图片，或者内容已损坏。",
-  upstream_http: "端点拒绝了请求。401/403 通常是 key 不对或没有出图权限；" +
-    "400 且提到 responseModalities / imageConfig 时，把「高级」里的响应模态或输出尺寸清空再试。",
-  upstream_transport: "连不上端点。浏览器只会给出一个笼统的网络错误，常见原因有三个：" +
-    "①端点没有为本页来源发 CORS 头（自定义网关最常见）；②这台机器访问不到该地址；③代理拦截。" +
-    "官方端点已确认对本页可用，自定义网关需要它自己发 Access-Control-Allow-Origin。",
-  upstream_timeout: "超过设定的墙钟时限仍未返回。上游请求可能仍在生成、也可能仍在计费——" +
-    "超时只是本页放弃等待，不代表上游已经停止。",
-  upstream_non_json: "端点返回了非 JSON（通常是 HTML 错误页）。检查「高级」里的端点地址是否指对了。",
-  upstream_protocol: "端点返回的 JSON 结构不是对象，可能这个地址不是 Gemini 协议端点。",
-  upstream_error_field: "端点在 HTTP 200 里返回了 error 对象，通常是配额或权限问题。",
-  no_image: "端点没有返回图片。确认模型支持出图，并且响应模态里含 IMAGE（默认就是 TEXT,IMAGE）。" +
+  upstream_http: "Gemini 官方端点拒绝了请求。401/403 通常是服务端 key 无效或没有出图权限；" +
+    "400 且提到 responseModalities / imageConfig 时，通常是模型不支持对应参数。",
+  upstream_transport: "无法连接本站的 Gemini 转发接口。检查 Pages Function 部署，以及服务端到 Gemini 官方端点的网络。",
+  upstream_timeout: "超过墙钟时限仍未返回。Gemini 请求可能仍在生成或计费；本页超时只会放弃等待。",
+  upstream_non_json: "Gemini 官方端点返回了非 JSON 响应。",
+  upstream_protocol: "Gemini 官方端点返回的 JSON 结构不是对象。",
+  upstream_error_field: "Gemini 官方端点返回了 error 对象，通常与配额或权限有关。",
+  no_image: "模型没有返回图片。确认配置的模型支持图像生成，并且响应包含 IMAGE。" +
     "完整响应可用下方按钮下载。",
   palette_violation: "这是内部一致性断言失败，说明降采样或量化出现了回归。像素本应严格来自调色板。",
   invariant: "内部一致性断言失败。",

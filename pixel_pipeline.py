@@ -29,23 +29,11 @@ import pixel_redraw as pr
 
 VERSION = "0.4.0"
 
-# The image models a user is most likely to want, offered as autocomplete in
-# the UI.  Free text is still accepted: a gateway may serve anything.
-KNOWN_MODELS = (
-    "gemini-3.1-flash-image",
-    "gemini-3.1-flash-lite-image",
-    "gemini-3-pro-image",
-)
-
-
 def web_meta() -> str:
-    """The boot payload, in the exact shape the page's applyMeta() consumed.
+    """Public boot metadata for settings owned by the client-side renderer.
 
-    The old GET /api/meta answered this from process env.  The user now supplies
-    the model, endpoint and key, so those keys are gone: the page merges its own
-    settings in.  Everything that is a property of the *program* rather than of
-    the user is still answered here, from the same constants the pipeline uses,
-    so the density ladder and the palette list cannot drift from the renderer.
+    The model name and key readiness are provided separately by the Pages
+    Function; this payload contains no deployment secrets or model credentials.
     """
     return json.dumps(
         {
@@ -60,15 +48,12 @@ def web_meta() -> str:
             "max_upload_bytes": pr.MAX_UPLOAD_BYTES,
             "max_image_pixels": pr.MAX_IMAGE_PIXELS,
             "max_dimension": pr.MAX_DIMENSION,
-            "default_base_url": pr.DEFAULT_BASE_URL,
-            "default_api_version": pr.DEFAULT_API_VERSION,
             "default_timeout": pr.DEFAULT_TIMEOUT,
             "default_scale": pr.DEFAULT_SCALE,
             "default_max_colors": pr.DEFAULT_MAX_COLORS,
             "default_passes": 2,
             "keep_raw": True,
             "pixelize_only_available": True,
-            "known_models": list(KNOWN_MODELS),
             "version": VERSION,
         },
         ensure_ascii=False,
@@ -116,12 +101,9 @@ def _transport_message(exc: BaseException, base_url: str) -> str:
     """
     host = pr.safe_host(base_url)
     return (
-        f"Could not reach {host}: {exc}. "
-        "In a browser this usually means one of three things: the endpoint did not "
-        "send CORS headers for this page's origin, the endpoint is unreachable from "
-        "this machine, or a proxy refused the request. If you configured a gateway "
-        "rather than the official endpoint, it must send "
-        "Access-Control-Allow-Origin and allow the x-goog-api-key header."
+        f"Could not reach the site's Gemini relay for {host}: {exc}. "
+        "Check that the site is deployed with its API function and that the server "
+        "can reach the official Gemini endpoint."
     )
 
 
@@ -151,15 +133,16 @@ async def run_pipeline(source_b64: str, request_json: str, on_progress: Any = No
             raise pr.ConfigError("No image was supplied.")
 
         upstream = request.get("upstream") or {}
-        api_key = str(upstream.get("api_key") or "")
+        proxy_url = str(upstream.get("proxy_url") or "")
+        if not proxy_url:
+            raise pr.ConfigError("The site's Gemini relay URL is missing.")
         _preset, colors = _resolve_palette(request.get("palette"))
 
         size = request.get("size")
         config = pr.make_config(
             model=str(upstream.get("model") or ""),
-            api_key=api_key,
-            base_url=str(upstream.get("base_url") or pr.DEFAULT_BASE_URL),
-            api_version=str(upstream.get("api_version") or pr.DEFAULT_API_VERSION),
+            base_url=pr.DEFAULT_BASE_URL,
+            api_version=pr.DEFAULT_API_VERSION,
             timeout=upstream.get("timeout") or pr.DEFAULT_TIMEOUT,
             size=f"{int(size)}x{int(size)}" if isinstance(size, int) else (size or pr.DEFAULT_SIZE),
             scale=pr.preview_scale_for(int(size)) if isinstance(size, int) else pr.DEFAULT_SCALE,
@@ -176,18 +159,15 @@ async def run_pipeline(source_b64: str, request_json: str, on_progress: Any = No
         async def call_upstream(payload: dict[str, Any]) -> dict[str, Any]:
             from pyodide.http import pyfetch  # imported here: this module must import anywhere
 
-            url = pr.api_url(config.base_url, config.api_version, config.model)
-            transcript.record_request(url, payload)
+            official_url = pr.api_url(config.base_url, config.api_version, config.model)
+            transcript.record_request(official_url, payload)
             headers = {
                 "Accept": "application/json",
                 "Content-Type": "application/json",
-                # No User-Agent: browsers forbid scripts setting it, and a
-                # silently dropped header is worse than an absent one.
-                "x-goog-api-key": config.api_key,
             }
             try:
                 response = await asyncio.wait_for(
-                    pyfetch(url, method="POST", headers=headers, body=json.dumps(payload)),
+                    pyfetch(proxy_url, method="POST", headers=headers, body=json.dumps(payload)),
                     timeout=config.timeout,
                 )
             except asyncio.TimeoutError as exc:
@@ -267,7 +247,7 @@ async def run_pipeline(source_b64: str, request_json: str, on_progress: Any = No
             ensure_ascii=False,
         )
     except BaseException as exc:  # noqa: BLE001 - nothing may cross the boundary
-        envelope = pr.to_envelope(exc, api_key, where=phase or "run_pipeline", phase=phase or None)
+        envelope = pr.to_envelope(exc, "", where=phase or "run_pipeline", phase=phase or None)
         if transcript.request is not None:
             envelope["request"] = transcript.request
         if transcript.response is not None:

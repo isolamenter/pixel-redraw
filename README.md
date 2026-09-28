@@ -2,7 +2,7 @@
 
 以 Gemini 原生 `generateContent` 协议调用多模态大模型，并在本地通过 Pillow 与 NumPy 将生成结果高精度量化为受限调色板的真实像素画。
 
-**这是一个纯静态站点，没有后端进程。** 浏览器直接调用用户填写的模型端点，并在本地 Web Worker 中使用内置打包的 Pyodide（WASM 版 CPython + Pillow + NumPy）完成像素化与拓扑清理，**无需从外部 CDN 下载运行时**。部署只需要一个分发静态文件的 Nginx 容器。
+前端静态资源由 Cloudflare Pages 分发；Gemini 请求通过 Pages Function 转发到官方端点，API Key 保存在服务端 Secret 中。像素化仍在浏览器 Web Worker 中由 Pyodide WASM（CPython + Pillow + NumPy）完成。
 
 ---
 
@@ -46,20 +46,20 @@
 
 - **核心算法**：Python 3.9+ / CPython 3.14 (Pyodide WASM)、Pillow、NumPy
 - **前端架构**：原生 ES Module JavaScript (Vanilla JS, 无构建打包)、Web Worker、CSS3
-- **部署环境**：Docker / Nginx:alpine
+- **部署环境**：Cloudflare Pages + Pages Functions（Docker/Nginx 仅作静态预览）
 - **开发工具**：Node.js 18+ (用于本地静态服务与模块链接检查)
 
 ---
 
 ## 快速开始
 
-### 方式一：Docker 运行（推荐）
+### 本地静态预览
 
 ```bash
 docker compose up -d --build     # 访问 http://localhost:8080/
 ```
 
-然后在页面设置中填入 **模型名**（如 `gemini-3.1-flash-image` 或 `gemini-3-pro-image`）和 Google AI Studio 获取的 **API Key** 即可使用。
+Docker/Nginx 只提供静态资源和本地像素处理。要调用 Gemini，请用 Wrangler 启动 Pages Function，或部署到 Cloudflare Pages。
 
 > 💡 **零成本体验**：勾选「仅本地渲染」，拖入任意图片即可完全不消耗 Token 体验本地像素化管线。
 
@@ -74,11 +74,34 @@ docker compose up -d --build     # 访问 http://localhost:8080/
    pip install -r requirements.txt -r requirements-dev.txt
    ```
 
-2. **启动开发服务器**：
+2. **本地静态预览**：
    ```bash
    node tools/serve.mjs          # 访问 http://127.0.0.1:8137/static/index.html
    ```
-   > ⚠️ **注意**：`tools/serve.mjs` 服务于仓库根目录并配置了 `Cache-Control: no-store`，确保修改即时生效。**请勿使用 `python3 -m http.server`**，其缺少防缓存头可能导致浏览器加载旧模块。
+   该命令用于 UI 与本地像素化预览；Gemini 生成需要下一节的 Pages Function。
+
+### Gemini 本地开发
+
+```bash
+cp .dev.vars.example .dev.vars  # 把 Gemini API Key 填入 GEMINI_API_KEY
+npm --prefix tools install
+npm --prefix tools run dist
+node tools/build-pages.mjs
+npx wrangler pages dev dist
+```
+
+访问 Wrangler 输出的本地地址。`.dev.vars` 已加入 `.gitignore`，不要把实际 Key 提交到仓库。
+
+### Cloudflare Pages 部署
+
+在 Pages 项目设置中使用以下构建配置：
+
+- **Root directory**：仓库根目录（`functions/` 和 `wrangler.jsonc` 位于这里）
+- **Build command**：`npm --prefix tools install && npm --prefix tools run dist && node tools/build-pages.mjs`
+- **Build output directory**：`dist`
+- 在 Pages 项目的 **Variables and Secrets** 中添加加密 Secret `GEMINI_API_KEY`；可选添加普通变量 `GEMINI_MODEL`，默认模型为 `gemini-3.1-flash-lite-image`。
+
+部署后，前端不会收到 API Key；请求会由 `/api/generate` 转发至 `generativelanguage.googleapis.com`。
 
 ---
 
@@ -104,14 +127,16 @@ node tools/browser-smoke.mjs
 ├── pixel_reduce.py         # 核心算法：目标网格、网格相位对齐、QVote 区域表决、拓扑清理
 ├── pixel_color.py          # 核心算法：Oklab 感知色彩空间转换、K-Means 聚类、最近色匹配
 ├── pixel_palettes.py       # 数据与校验：15 款内置预设调色板与自检逻辑
-├── pixel_pipeline.py       # 浏览器边界：唯一适配 Pyodide 的模块，负责 pyfetch 传输与脱敏信封
+├── pixel_pipeline.py       # 浏览器 WASM 边界：请求同源 Gemini 转发接口并构建脱敏信封
+├── functions/api/          # Cloudflare Pages Functions：公开配置与 Gemini 官方 API 转发
+├── wrangler.jsonc          # Cloudflare Pages 配置
 ├── static/                 # 纯静态前端
 │   ├── index.html          # 单页应用入口
 │   ├── app.css             # 样式定义
 │   └── js/                 # 原生 ES 模块（app.js, pipeline.js, worker.js, settings.js 等）
 ├── tests/                  # 单元测试（test_core.py, test_refactor.py）
 ├── tools/                  # 开发与测试工具（serve.mjs, linkcheck.mjs, browser-smoke.mjs 等）
-├── deploy/                 # 生产部署配置（nginx.conf）
+├── deploy/                 # Nginx 静态预览配置
 ├── docs/                   # 详细技术规范、架构决策与计划
 │   ├── specs/              # 功能规范
 │   ├── decisions/          # 架构决策记录 (ADR)
@@ -135,17 +160,16 @@ node tools/browser-smoke.mjs
 
 ## 凭据与网络安全
 
-1. **凭据仅存浏览器**：API Key 仅存放于用户的 `sessionStorage`（勾选后持久化于 `localStorage`），由浏览器直连请求模型端点，绝不上报任何中转服务器。
-2. **双重脱敏保障**：Python 边界信封包装（`to_envelope()`）与前端渲染（`redactSecrets()`）两道防线，确保诊断报告、界面提示与导出的 JSON 中绝不暴露明文 Key。
-3. **网络与 CORS 要求**：
-   - 官方端点（`generativelanguage.googleapis.com`）已默认放行浏览器跨域。
-   - 若使用自定义代理网关，该网关必须自行配置 CORS 响应头，允许跨域及 `x-goog-api-key` 请求头。
+1. **服务端密钥**：`GEMINI_API_KEY` 只保存在本地 `.dev.vars` 或 Cloudflare Pages 加密 Secret 中，不进入浏览器静态资源、WASM、日志或导出文件。
+2. **调用路径**：浏览器只请求同源 `/api/generate`；Pages Function 固定转发到 Gemini 官方 `v1beta` `generateContent` 端点。
+3. **图片去向**：图像与提示词会经过 Pages Function 并发送给 Google Gemini；像素化运算仍在浏览器中完成。
+4. **配额归属**：所有访客共用部署配置的 Gemini Key，每次生成会消耗该 Key 所属项目的配额。
 
 ---
 
 ## 离线打包与部署
 
-应用默认已内置完整的 Pyodide WASM 运行时（位于 `static/pyodide/`，包含 CPython 解释器、标准库、Pillow 与 NumPy），无需任何外部 CDN 依赖。
+Cloudflare Pages 构建会通过 `tools/fetch-dist.mjs` 获取 Pyodide WASM 运行时、Pillow 与 NumPy，并由 `tools/build-pages.mjs` 与静态资源一起打包。
 
 若需重新拉取或升级本地运行时：
 
@@ -157,6 +181,7 @@ cd tools && npm install && npm run dist      # 更新 static/pyodide/ (约 17MB)
 
 ## 已知限制
 
-- **模型调用仍需网络**：离线打包彻底解决了静态资源与算法运行时的加载问题；但若使用 Gemini 生成功能，用户的浏览器仍需能够访问上游 API 端点。
+- **模型调用仍需网络**：用户浏览器需要访问部署站点；Pages Function 需要能访问 Gemini 官方 API。
 - **无法真正撤回进行中的上游请求**：点击「终止」会销毁 Web Worker 以打断本地 WASM 计算，但已发出的 HTTP 请求仍在服务端处理。
-- **无服务端持久化**：应用不包含数据库，刷新页面重置所有执行状态与历史，需通过导出按钮手动保存结果。
+- **共享 Key 的公开调用**：公开站点上的访客会共用服务端 Gemini Key，站点请求量会影响该项目的配额与费用。
+- **无业务数据持久化**：应用不包含数据库，刷新页面重置所有执行状态与历史，需通过导出按钮手动保存结果。

@@ -1,11 +1,7 @@
 /**
- * Build tools/pyodide-dist/: a self-contained Pyodide runtime for local testing.
- *
- * The deployed page loads Pyodide from jsDelivr, so this is not needed to run
- * the app.  It exists because Node cannot resolve a remote indexURL for its own
- * module imports, so the Node smoke test needs the runtime on disk.  It doubles
- * as the answer to "how big would self-hosting be, and does it work offline":
- * the total is ~17MB, most of it the interpreter itself.
+ * Build a self-contained Pyodide runtime for local tests and Pages deployment.
+ * It is copied into the Pages asset bundle so the browser does not need a
+ * separate public CDN for the runtime.
  *
  * Usage:  npm install && npm run dist
  */

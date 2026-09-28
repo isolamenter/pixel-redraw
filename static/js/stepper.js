@@ -86,7 +86,7 @@ export function describeConnection() {
     return;
   }
   if (!S.pixelizeOnly && !upstreamReady()) {
-    setStatus("warn", "就绪，但还没有填模型名与 API key。");
+    setStatus("warn", "就绪，但本站尚未配置 Gemini API Key。");
     return;
   }
   setStatus("", "就绪。");
@@ -111,7 +111,7 @@ export function updateGenerateEnabled() {
   else if (S.running) { ok = false; why = "已有任务在跑；可以点「终止」。"; }
   else if (!S.pixelizeOnly && !upstreamReady()) {
     ok = false;
-    why = "还没填模型名与 API key。勾上「仅本地渲染」可以完全离线地验证尺寸与调色板。";
+    why = "本站尚未配置 Gemini API Key；勾选「仅本地渲染」仍可本地处理图片。";
   }
   btn.disabled = !ok;
   $("#generate-why").textContent = why;

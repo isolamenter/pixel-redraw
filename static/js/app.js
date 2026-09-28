@@ -1,11 +1,9 @@
 /* 页面入口：装配所有模块、把运行时元数据落到控件上、接好事件。
  *
- * 这个文件替代了过去的 boot() + applyMeta() + reattach()。其中 reattach 整条
- * 消失是有意的：它存在的理由是「任务活在服务端，刷新页面要重新挂上去」；
- * 现在任务就在这个标签页里，刷新即重置，没有需要重新挂载的东西。 */
+ * 图像像素化任务仍在本页 Worker 中运行；只有 Gemini 请求通过站点 API 函数转发。 */
 import { PYODIDE_INDEX_URL } from './config.js';
 import { S } from './state.js';
-import { $, addTimeline, el, json, note, safeStr } from './dom.js';
+import { $, addTimeline, el, json, safeStr } from './dom.js';
 import { pushError, report } from './errors.js';
 import {
   cancelBtn, describeConnection, renderStepper, setStatus, tickUI, updateGenerateEnabled,
@@ -14,16 +12,13 @@ import { renderPresets, renderSizes, syncPaletteUI, wireMaxColorsControls } from
 import { wireImageInput } from './image.js';
 import { applyDefaultZoom, applyZoom, initCopy } from './results.js';
 import {
-  clearStoredKey, knownModelsDatalist, loadSettings, settings, syncSettingsUI,
-  upstreamHost, upstreamReady, wireSettingsUI,
+  loadSettings, settings, upstreamHost, upstreamReady,
 } from './settings.js';
 import {
   bootWorker, cancelRun, doRepixelize, scheduleRepixelize, setRuntimeMetaHandler, startGenerate,
 } from './pipeline.js';
 
-/* 状态条：版本、模型、端点。
-   以前这三格都由服务端上报；现在模型与端点是用户自己填的，所以它们必须随设置变化
-   而重画，而不是在启动时写死一次。 */
+/* 状态条：版本、服务端模型与 Gemini 官方端点。 */
 function refreshChips() {
   var meta = S.meta || {};
   var version = $("#chip-version");
@@ -32,25 +27,18 @@ function refreshChips() {
 
   var model = $("#chip-model");
   model.textContent = "模型 ";
-  model.appendChild(el("b", { text: settings.model || "未填" }));
+  model.appendChild(el("b", { text: settings.model || "—" }));
 
   var upstream = $("#chip-upstream");
   var ready = upstreamReady();
-  var host = upstreamHost(meta);
+  var host = upstreamHost();
   upstream.textContent = "端点 ";
-  upstream.appendChild(el("b", { text: ready ? (host || "—") : "未就绪" }));
+  upstream.appendChild(el("b", { text: ready ? host : "未配置" }));
   upstream.title = ready
-    ? "请求将直接发往 " + (host || "") + "（由本页发出，不经过任何服务器）"
-    : "填上模型名与 API key 后，请求会从本页直接发往端点";
+    ? "本站服务端使用私密 API Key 调用 Gemini 官方端点"
+    : (settings.configError ? "无法读取本站 Gemini 配置：" + settings.configError : "本站尚未配置 Gemini API Key");
   upstream.style.borderColor = ready ? "" : "var(--warn)";
   upstream.style.color = ready ? "" : "var(--warn)";
-
-  var keyState = $("#cfg-key-state");
-  if (keyState) {
-    keyState.textContent = settings.api_key
-      ? (settings.remember ? "已填入，并保存在本机 localStorage" : "已填入，仅本次会话有效")
-      : "未填写";
-  }
 }
 
 /* 运行时上报的 meta：密度档位、色数、调色板预设、各项上限。
@@ -61,11 +49,6 @@ export function applyMeta(meta) {
   S.preset = null;
   S.paletteMode = "auto";
   S.maxColors = meta.default_max_colors || 16;
-  knownModelsDatalist(meta);
-  if (!settings.model && (meta.known_models || []).length) {
-    settings.model = meta.known_models[0];   // 只是给个起点，用户随时可改
-    syncSettingsUI();
-  }
   renderSizes();
   renderPresets();
   syncPaletteUI();
@@ -82,19 +65,13 @@ export function applyMeta(meta) {
 }
 
 function boot() {
-  loadSettings();
-  syncSettingsUI();
-  wireSettingsUI(function (key) {
+  loadSettings().then(function () {
     refreshChips();
     updateGenerateEnabled();
     describeConnection();
-    if (key === "passes") {
-      note(settings.passes === 2
-        ? "已开启两轮精修：会调用模型两次。"
-        : "已改为单轮：只调用模型一次，省一半 token。");
-    }
   });
 
+  refreshChips();
   initCopy();
   wireImageInput();
   wireMaxColorsControls();
@@ -108,15 +85,6 @@ function boot() {
       e.preventDefault();
     }
   });
-  var clearKey = $("#cfg-clear-key");
-  if (clearKey) {
-    clearKey.addEventListener("click", function () {
-      clearStoredKey();
-      refreshChips();
-      updateGenerateEnabled();
-      note("已清除本页保存的 API key（sessionStorage 与 localStorage 都清掉了）。");
-    });
-  }
 
   $("#pixelize-only").addEventListener("change", function (e) {
     S.pixelizeOnly = e.target.checked;
@@ -162,8 +130,7 @@ function boot() {
     describeConnection();
   }, 500);
 
-  /* 剪贴板与「记住 key」都依赖安全上下文。HTTP + 裸 IP 访问时两者都不可用，
-     所以启动就把这件事说清楚，而不是等用户点了复制才弹一条错误。 */
+  /* 剪贴板依赖安全上下文。HTTP + 裸 IP 访问时复制会降级为手动选择。 */
   if (!window.isSecureContext) {
     addTimeline("-", "secure-context",
       "当前不是安全上下文（HTTP + 裸 IP）：navigator.clipboard 与 localStorage 之外的存储能力都会受限，" +
@@ -171,7 +138,7 @@ function boot() {
   }
 
   setRuntimeMetaHandler(applyMeta);
-  addTimeline("-", "boot", "页面启动，正在从 " + PYODIDE_INDEX_URL + " 加载运行时（本页无后端）",
+  addTimeline("-", "boot", "页面启动，正在从 " + PYODIDE_INDEX_URL + " 加载运行时",
     null, null, "info");
   setStatus("busy", "正在加载运行时（首次约 7.5MB，之后走缓存）…");
   renderStepper();

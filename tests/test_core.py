@@ -182,7 +182,7 @@ class LocalOnlyTest(unittest.TestCase):
         with Image.open(io.BytesIO(generation.outputs["pixel_png"])) as pixel:
             self.assertEqual(pixel.size, (4, 4))
 
-    def test_model_run_without_credentials_is_a_config_error(self):
+    def test_model_run_without_model_is_a_config_error(self):
         upstream = FakeUpstream(image_response("red"))
         with self.assertRaises(pr.ConfigError) as caught:
             run_generation(pr.generate(
