@@ -22,8 +22,7 @@ async function boot(indexURL, pythonFiles) {
   const step = (name) => self.postMessage({ type: 'boot-progress', step: name });
 
   step('interpreter');
-  /* 跨源 module import 需要 CORS：jsDelivr 返回 access-control-allow-origin: *。
-     把这行换成本地路径即可完全自托管（见 README「离线部署」）。 */
+  /* 运行时由站点从 static/pyodide/ 自托管，浏览器不需要访问 Pyodide CDN。 */
   const module = await import(indexURL + 'pyodide.mjs');
   pyodide = await module.loadPyodide({ indexURL: indexURL });
 

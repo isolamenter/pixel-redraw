@@ -2,7 +2,7 @@
  * Drive the real page in headless Chrome and run the free path end to end.
  *
  * This is the only check that exercises everything at once: ES modules, the
- * module Worker, the CDN Pyodide load, `web_meta()`, and a real pixelization by
+ * module Worker, the self-hosted Pyodide load, `web_meta()`, and a real pixelization by
  * Pillow compiled to wasm — with no API key and no model call, because
  * 「仅本地渲染」 needs neither.
  *
@@ -98,9 +98,8 @@ await send('Page.navigate', { url: URL_UNDER_TEST });
 const failures = [];
 const status = async () => evaluate("document.querySelector('#status-text').textContent");
 
-/* Report where the runtime is actually coming from: config.js is the one line that
-   switches between the CDN and a self-hosted copy, and this message used to claim
-   "from CDN" even when it was testing the self-hosted path. */
+/* Report the runtime URL selected by config.js so failures identify which assets
+   the browser attempted to load. */
 const indexUrl = await evaluate(
   `(async () => (await import(new URL('js/config.js', document.baseURI).href)).PYODIDE_INDEX_URL)()`,
 ).catch(() => '(unknown)');
@@ -229,4 +228,4 @@ if (failures.length) {
   if (chromeStderr.trim()) console.error('\nchrome stderr tail:\n' + chromeStderr.split('\n').slice(-8).join('\n'));
   process.exit(1);
 }
-console.log('\nOK: the page booted the runtime from the CDN and rendered a real pixelized image.');
+console.log('\nOK: the page booted the self-hosted runtime and rendered a real pixelized image.');

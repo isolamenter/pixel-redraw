@@ -1,15 +1,15 @@
 /**
  * Local dev server for the static site.
  *
- * Serves the repository root, so the same absolute paths work as in the nginx
- * image: open http://127.0.0.1:8137/static/index.html and the page finds
+ * Serves the repository root so local URLs match the Pages asset layout:
+ * open http://127.0.0.1:8137/static/index.html and the page finds
  * /pixel_redraw.py, /pixel_palettes.py and /pixel_pipeline.py at the root.
  *
  * It sends `Cache-Control: no-store` for our own files, which plain
  * `python3 -m http.server` does not. That matters more than it sounds: without
  * it a browser will happily keep serving the previous version of a module, and
- * you end up debugging code you already fixed. Requests to the CDN are
- * unaffected, so the Pyodide cache still works.
+ * you end up debugging code you already fixed. The Pyodide runtime is served
+ * locally from static/pyodide/ as well.
  *
  * Usage: node tools/serve.mjs [port]     (default 8137)
  */

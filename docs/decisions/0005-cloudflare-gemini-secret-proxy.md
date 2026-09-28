@@ -21,7 +21,7 @@
 - 浏览器不再持有维护者的 API Key，且不再直接访问 Gemini 上游。
 - 所有访客共用一份 Key 与 Gemini 配额；此版本没有用户身份、每用户限额或持久化。
 - 图片和提示词会经过 Cloudflare 并发送给 Google Gemini；继续在本地运行的只有图像后处理。
-- Pages Function 增加一次服务端转发请求；静态预览服务器本身不提供 Gemini 生成功能。
+- Pages Function 增加一次服务端转发请求；本地静态预览服务本身不提供 Gemini 生成功能。
 
 ## 后续验证
 

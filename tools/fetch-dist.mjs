@@ -1,7 +1,6 @@
 /**
- * Build a self-contained Pyodide runtime for local tests and Pages deployment.
- * It is copied into the Pages asset bundle so the browser does not need a
- * separate public CDN for the runtime.
+ * Prepare the minimal self-hosted Pyodide runtime for local use and Pages.
+ * The browser smoke test loads the same files directly from static/pyodide/.
  *
  * Usage:  npm install && npm run dist
  */
@@ -11,6 +10,13 @@ import { join } from 'node:path';
 
 const PYODIDE_VERSION = '314.0.7';
 const CDN = `https://cdn.jsdelivr.net/pyodide/v${PYODIDE_VERSION}/full/`;
+const RUNTIME_FILES = [
+  'pyodide.mjs',
+  'pyodide.asm.mjs',
+  'pyodide.asm.wasm',
+  'python_stdlib.zip',
+  'pyodide-lock.json',
+];
 // Only what this app actually imports.  Adding a package here means fetching
 // its wheel too; the lock file names the exact file for the running release.
 const PACKAGES = ['pillow', 'numpy'];
@@ -18,7 +24,6 @@ const PACKAGES = ['pillow', 'numpy'];
 const here = fileURLToPath(new URL('.', import.meta.url));
 const source = join(here, 'node_modules', 'pyodide');
 const target = join(here, '..', 'static', 'pyodide');
-const testDist = join(here, 'pyodide-dist');
 
 if (!existsSync(source)) {
   console.error(
@@ -28,7 +33,10 @@ if (!existsSync(source)) {
 }
 
 rmSync(target, { recursive: true, force: true });
-cpSync(source, target, { recursive: true });
+mkdirSync(target, { recursive: true });
+for (const file of RUNTIME_FILES) {
+  cpSync(join(source, file), join(target, file));
+}
 
 const lock = JSON.parse(
   await (await import('node:fs/promises')).readFile(join(target, 'pyodide-lock.json'), 'utf8'),
@@ -52,7 +60,4 @@ for (const name of PACKAGES) {
   console.log(`fetched ${file} (${(bytes.length / 1024 / 1024).toFixed(1)} MB)`);
 }
 
-rmSync(testDist, { recursive: true, force: true });
-cpSync(target, testDist, { recursive: true });
-
-console.log(`\nstatic/pyodide/ and tools/pyodide-dist/ ready for Pyodide ${PYODIDE_VERSION} with ${PACKAGES.join(', ')}`);
+console.log(`\nstatic/pyodide/ ready for Pyodide ${PYODIDE_VERSION} with ${PACKAGES.join(', ')}`);

@@ -16,7 +16,7 @@
 - [项目结构](#项目结构)
 - [文档入口](#文档入口)
 - [凭据与网络安全](#凭据与网络安全)
-- [离线部署](#离线部署)
+- [Pyodide 运行时打包](#pyodide-运行时打包)
 - [已知限制](#已知限制)
 
 ---
@@ -46,7 +46,7 @@
 
 - **核心算法**：Python 3.9+ / CPython 3.14 (Pyodide WASM)、Pillow、NumPy
 - **前端架构**：原生 ES Module JavaScript (Vanilla JS, 无构建打包)、Web Worker、CSS3
-- **部署环境**：Cloudflare Pages + Pages Functions（Docker/Nginx 仅作静态预览）
+- **部署环境**：Cloudflare Pages + Pages Functions
 - **开发工具**：Node.js 18+ (用于本地静态服务与模块链接检查)
 
 ---
@@ -56,10 +56,12 @@
 ### 本地静态预览
 
 ```bash
-docker compose up -d --build     # 访问 http://localhost:8080/
+npm --prefix tools install
+npm --prefix tools run dist
+node tools/serve.mjs             # 访问 http://127.0.0.1:8137/static/index.html
 ```
 
-Docker/Nginx 只提供静态资源和本地像素处理。要调用 Gemini，请用 Wrangler 启动 Pages Function，或部署到 Cloudflare Pages。
+这条路径适合验证界面与本地像素化；Gemini 生成请使用下方 Wrangler 本地开发命令或 Cloudflare Pages 部署。
 
 > 💡 **零成本体验**：勾选「仅本地渲染」，拖入任意图片即可完全不消耗 Token 体验本地像素化管线。
 
@@ -74,11 +76,7 @@ Docker/Nginx 只提供静态资源和本地像素处理。要调用 Gemini，请
    pip install -r requirements.txt -r requirements-dev.txt
    ```
 
-2. **本地静态预览**：
-   ```bash
-   node tools/serve.mjs          # 访问 http://127.0.0.1:8137/static/index.html
-   ```
-   该命令用于 UI 与本地像素化预览；Gemini 生成需要下一节的 Pages Function。
+2. 本地静态预览的准备与启动命令见「快速开始」。
 
 ### Gemini 本地开发
 
@@ -136,7 +134,6 @@ node tools/browser-smoke.mjs
 │   └── js/                 # 原生 ES 模块（app.js, pipeline.js, worker.js, settings.js 等）
 ├── tests/                  # 单元测试（test_core.py, test_refactor.py）
 ├── tools/                  # 开发与测试工具（serve.mjs, linkcheck.mjs, browser-smoke.mjs 等）
-├── deploy/                 # Nginx 静态预览配置
 ├── docs/                   # 详细技术规范、架构决策与计划
 │   ├── specs/              # 功能规范
 │   ├── decisions/          # 架构决策记录 (ADR)
@@ -167,7 +164,7 @@ node tools/browser-smoke.mjs
 
 ---
 
-## 离线打包与部署
+## Pyodide 运行时打包
 
 Cloudflare Pages 构建会通过 `tools/fetch-dist.mjs` 获取 Pyodide WASM 运行时、Pillow 与 NumPy，并由 `tools/build-pages.mjs` 与静态资源一起打包。
 

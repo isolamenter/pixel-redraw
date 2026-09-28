@@ -7,9 +7,8 @@
  * product, so if it behaved differently under wasm the whole approach would be
  * wrong -- better to learn that here than in a user's tab.
  *
- * It loads the runtime from tools/pyodide-dist/ (a local copy of the same
- * release the deployed page fetches from the CDN), because Node cannot resolve
- * a remote indexURL for its own module imports.  Run `npm run dist` first.
+ * It loads the runtime directly from static/pyodide/, the same files shipped
+ * by the Pages build. Run `npm run dist` first.
  *
  * Usage: node tools/smoke.mjs
  */
@@ -18,8 +17,8 @@ import { fileURLToPath } from 'node:url';
 
 // A plain filesystem path, not a file:// URL: Pyodide concatenates indexURL
 // onto 'pyodide.asm.mjs' and hands the result to import(), which wants a path.
-const PYODIDE_INDEX_URL = fileURLToPath(new URL('./pyodide-dist/', import.meta.url));
-const { loadPyodide } = await import(new URL('./pyodide-dist/pyodide.mjs', import.meta.url));
+const PYODIDE_INDEX_URL = fileURLToPath(new URL('../static/pyodide/', import.meta.url));
+const { loadPyodide } = await import(new URL('../static/pyodide/pyodide.mjs', import.meta.url));
 const repoRoot = new URL('..', import.meta.url);
 const read = (name) => readFileSync(new URL(name, repoRoot), 'utf8');
 
@@ -65,12 +64,17 @@ report["meta_sizes"] = meta["sizes"]
 
 source_b64 = base64.b64encode(digest.fixture()).decode("ascii")
 request = {
-    "image": source_b64,
-    "filename": "fixture.png",
-    "size": 16,
+  "image": source_b64,
+  "filename": "fixture.png",
+  "size": 16,
     "max_colors": 8,
     "palette": {"preset": "pico8"},
     "pixelize_only": True,
+    "upstream": {
+      "model": "gemini-3.1-flash-lite-image",
+      "proxy_url": "http://127.0.0.1/api/generate",
+      "timeout": 180,
+    },
 }
 envelope = json.loads(await run_pipeline(source_b64, json.dumps(request), js_progress))
 report["pipeline_ok"] = envelope["ok"]

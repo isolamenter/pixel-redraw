@@ -3,9 +3,8 @@
 __pycache__/
 *.py[cod]
 
-# Pyodide runtime fetched for local bundling/testing (npm run dist, ~17MB)
+# Generated Pyodide runtime for local use and Pages builds (~17MB)
 tools/node_modules/
-tools/pyodide-dist/
 static/pyodide/
 tools/package-lock.json
 

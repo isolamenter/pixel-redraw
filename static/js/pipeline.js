@@ -87,8 +87,7 @@ export async function bootWorker() {
           kind: "frontend", where: "worker.boot", phase: "received",
           message: "numpy 未能加载；固定调色板 + 高密度输出会非常慢。",
           hint: "纯 Python 的最近色映射在 64 色下约 33µs/像素，一次两轮运行可能从几秒变成几分钟。" +
-                "自动调色板（auto）不受影响。若内网访问不到 CDN 的 numpy wheel，把 " +
-                "PYODIDE_INDEX_URL 指向自托管副本即可（见 README）。"
+                "自动调色板（auto）不受影响。请确认 Pages 构建包含 static/pyodide/ 下的运行时和 numpy wheel。"
         }, { source: "runtime" });
       }
       return;
@@ -140,8 +139,7 @@ function failBoot(message, detail, indexURL) {
     detail: String(detail || ""),
     hint: "页面无法在没有运行时的情况下工作：像素化由 Pyodide（WASM 版 CPython）执行。" +
           "最常见的原因是这台机器访问不到 " + String(indexURL || PYODIDE_INDEX_URL) + "。" +
-          "若内网不能出网，把 static/js/config.js 里的 PYODIDE_INDEX_URL 指向自托管副本" +
-          "（约 17MB，见 README「离线部署」），其余代码不用改。"
+          "确认站点已包含 static/pyodide/ 运行时文件（约 17MB，见 README「Pyodide 运行时打包」）。"
   }, { source: "runtime" });
   updateGenerateEnabled();
 }
@@ -454,8 +452,8 @@ export function resetRunUI(isRepixelize) {
 
 /* 取消 = 终止 Worker 再重建。
    浏览器里没有别的办法真正打断一段同步的 WASM 计算：setInterruptBuffer 需要
-   SharedArrayBuffer，而它需要 COOP/COEP 跨源隔离 —— 那套头又会挡住 CDN 上的
-   Pyodide。代价是取消后要重新加载运行时（秒级）；好处是真的会停下来。 */
+   SharedArrayBuffer 和 COOP/COEP 跨源隔离。本项目通过终止 Worker 取消运行，
+   不需要为此启用跨源隔离。代价是取消后要重新加载运行时（秒级）；好处是真的会停下来。 */
 export function cancelRun() {
   if (!S.worker) return;
   S.runSeq += 1;                 // 让所有在途回包失效
