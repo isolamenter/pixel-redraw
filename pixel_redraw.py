@@ -74,6 +74,7 @@ DEFAULT_BASE_URL = "https://generativelanguage.googleapis.com"
 # A wall-clock budget, not a per-socket timeout: the browser transport wraps the
 # whole request in asyncio.wait_for, so reaching this really does stop waiting.
 DEFAULT_TIMEOUT = 180.0
+DEFAULT_IMAGE_SIZE = "512"
 
 # Formats Gemini accepts for inline image data. Anything else (GIF, BMP, TIFF,
 # ...) has to be re-encoded before it can be sent.
@@ -256,7 +257,7 @@ def make_config(
     refine_prompt: str = "",
     keep_raw: bool = True,
     response_modalities: tuple[str, ...] | None = None,
-    image_size: str = "",
+    image_size: str = DEFAULT_IMAGE_SIZE,
     passes: int = 2,
     reducer_config: pixel_reduce.ReducerConfig | dict[str, Any] | None = None,
 ) -> Config:
@@ -339,7 +340,7 @@ def make_config(
         prompt=_fill_prompt(prompt_template, parsed_size),
         keep_raw=bool(keep_raw),
         response_modalities=modalities,
-        image_size=(image_size or "").strip(),
+        image_size=(image_size or DEFAULT_IMAGE_SIZE).strip(),
         base_size=parsed_size,
         prompt_template=prompt_template,
         refine_prompt_template=refine_prompt_template,

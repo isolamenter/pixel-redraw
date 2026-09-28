@@ -81,6 +81,7 @@
 - **Body**:
   - 输入图像使用 `contents[].parts[].inline_data`（含 `mime_type` 与 base64 数据）。
   - `generationConfig.responseModalities` 设为 `["TEXT", "IMAGE"]`。
+  - `generationConfig.imageConfig.imageSize` 默认固定为 `"512"`；实际像素尺寸随图像比例变化。该分辨率档仅适用于 Gemini 3.1 Flash Image。
 
 ### 4.2 响应解析与边界约束
 - **图像格式支持**：支持 `inlineData` 及 `inline_data` 驼峰与下划线两种字段命名，兼容 standard base64 及 data URI 形式。
