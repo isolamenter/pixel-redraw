@@ -16,7 +16,8 @@
 - [项目结构](#项目结构)
 - [文档入口](#文档入口)
 - [凭据与网络安全](#凭据与网络安全)
-- [离线部署](#离线部署)
+- [离线打包与部署](#离线打包与部署)
+- [服务器部署与回滚](#服务器部署与回滚)
 - [已知限制](#已知限制)
 
 ---
@@ -129,6 +130,7 @@ node tools/browser-smoke.mjs
   - [像素化与降采样管线规范](file:///Users/akiya/Project/pixel/docs/specs/pixel-reduction-pipeline.md)
   - [客户端运行时与安全规范](file:///Users/akiya/Project/pixel/docs/specs/client-runtime-and-security.md)
 - [架构决策记录 (ADR)](file:///Users/akiya/Project/pixel/docs/decisions/)：了解技术选型依据与演进历史。
+- [服务器部署与回滚](docs/deployment.md)：Ubuntu2 的静态站点发布和恢复记录。
 - [AI Agent 指南](file:///Users/akiya/Project/pixel/AGENTS.md)：AI Agent 协作开发的规范与执行工作流。
 
 ---
@@ -152,6 +154,10 @@ node tools/browser-smoke.mjs
 ```bash
 cd tools && npm install && npm run dist      # 更新 static/pyodide/ (约 17MB)
 ```
+
+### 服务器部署与回滚
+
+Ubuntu2 的发布步骤、健康检查、镜像回滚方法及每次发布记录见[部署指南](docs/deployment.md)。
 
 ---
 
